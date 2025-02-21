@@ -12,6 +12,9 @@ export default {
         background: "var(--background)",
         foreground: "var(--foreground)",
       },
+      backgroundImage: {
+        'piano' : "url('@/public/piano.png')",
+      },
     },
   },
   plugins: [],
