@@ -1,3 +1,4 @@
+'use-client'
 import Intro from "../ui/accueil/intro"
 import Choix from "../ui/accueil/choix"
 
