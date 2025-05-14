@@ -1,8 +1,14 @@
 import Image from "next/image"
-
+import { motion } from "framer-motion"
 export default function Title({text1, text2} : {text1: string, text2: string}) {
     return (
-        <div className="flex justify-between items-center">
+        <motion.div 
+        initial={{opacity : 0, y : 50}}
+        animate={{opacity : 1, y : 0}}
+        transition={{
+            duration : 1
+        }}
+        className="flex justify-between items-center">
             <h1 className="font-extralight text-5xl">{text1}</h1>
             <Image
                 src="/arrow.png"
@@ -12,6 +18,6 @@ export default function Title({text1, text2} : {text1: string, text2: string}) {
                 className="transform rotate-[-90deg]"
             />
             <h1 className="font-extralight text-5xl">{text2}</h1>
-        </div>
+        </motion.div>
     )
 }
