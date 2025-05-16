@@ -21,6 +21,7 @@ export default function Result({file} : ResultProps) {
           link.click();
           document.body.removeChild(link);
           URL.revokeObjectURL(url); // Free memory
+          
      }
 
     return (
