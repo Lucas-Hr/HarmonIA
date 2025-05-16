@@ -1,18 +1,36 @@
 import { ericaOne } from "../fonts"
 import Link from "next/link"
+import Image from "next/image"
 
 export default function Navbar() {
+    const links = [
+        {
+        name: "Accueil",
+        href : "/accueil"
+        },
+        {
+        name: "A propos",
+        href : "/apropos"
+        },
+    ]
     return (
         <div className="flex items-center p-5 text-white border-b-2 border-[#404040] bg-[#070707] fixed w-full px-40 justify-between ">
-            <div>
+            <div className="flex ">
+                {/* <Image src='/ispm.png' width={50} height={20} alt="ispm" /> */}
                 <h1 className={`text-3xl ${ericaOne.className}`}>HarmonIA</h1>
             </div>
-            <div className="ml-5 text-base">
-                <ul className="flex">
-                    <li className="mr-10">Accueil</li>
-                    <li className="mr-10">À propos</li>
-                    <li className="mr-10">Contact</li>
-                </ul>
+            <div className="ml-5 text-base flex">
+                    {links.map((link) => {
+                        return (
+                            <Link
+                            key={link.name}
+                            href={link.href}
+                            className="ms-10 hover:font-bold"
+                            >
+                            <p className="">{link.name}</p>
+                            </Link>
+                        );
+                })}
             </div>
         </div>
     )
