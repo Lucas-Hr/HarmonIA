@@ -5,11 +5,13 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 
 type CardProps = {
-    setIsConverted: (value: boolean) => void;
+    setIsConverted: (value: boolean) => void,
+    file : File | null,
+    setFile : (value : File | null) => void
 };
 
-export default function Card({setIsConverted }: CardProps) {
-    const [file, setFile] = useState<File | null>(null);
+export default function Card({setIsConverted , file, setFile}: CardProps) {
+
     const handleDrop = useCallback((event : any) => {
         event.preventDefault();
         const droppedFile = event.dataTransfer.files[0];
