@@ -4,7 +4,7 @@ import { motion } from "framer-motion"
 
 export default function Choix() {
     return (
-        <div className="px-40 h-screen py-40 bg-[black]">
+        <div className="px-40 py-40 bg-[black]">
             <motion.h1
             initial={{opacity : 0, y : 50}}
             whileInView={{opacity : 1, y : 0}}
@@ -12,6 +12,7 @@ export default function Choix() {
                duration : 1,
                delay : 0.25
             }}
+            viewport={{once : true}}
             className="text-white text-5xl text-center font-lighter">Que voulez-vous faire?</motion.h1>
             <motion.div 
                 initial={{opacity : 0, y : 50}}
@@ -20,6 +21,7 @@ export default function Choix() {
                 duration : 1,
                 delay : 0.5
                 }}
+                viewport={{once : true}}
             className="flex justify-evenly items-center mt-20">
                 <Link href={{
                     pathname : './accueil/converter',
