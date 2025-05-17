@@ -16,8 +16,8 @@ export default function Page() {
         className="px-40 h-screen pt-32">
             <Title text1={textOne || ''} text2={textTwo || ''}/>
             <div className="flex justify-center items-center mt-10">
-                <Card setIsConverted={setIsConverted} file ={file} setFile={setFile}/>
-                {isConverted && <Result file={file}/>}
+                <Card setIsConverted={setIsConverted} file ={file} setFile={setFile} textOne={textOne} />
+                {isConverted && <Result file={file} textOne={textOne}/>}
             </div>            
         </div>
     )
