@@ -5,23 +5,42 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 
 type CardProps = {
-    setIsConverted: (value: boolean) => void;
+    setIsConverted: (value: boolean) => void,
+    file : File | null,
+    setFile : (value : File | null) => void,
+    textOne : string | null
 };
 
-export default function Card({setIsConverted }: CardProps) {
-    const [file, setFile] = useState<File | null>(null);
+export default function Card({setIsConverted , file, setFile, textOne}: CardProps) {
+
     const handleDrop = useCallback((event : any) => {
         event.preventDefault();
         const droppedFile = event.dataTransfer.files[0];
-        if (droppedFile) {
-            setFile(droppedFile);
+        if (droppedFile && textOne === "Partition") {
+            if (droppedFile.type.startsWith('application/pdf')){
+                setFile(droppedFile);
+            } else alert("File type unsupported")
+            
+        } else if (droppedFile && textOne === "Musique") {
+            if (droppedFile.type.startsWith('audio/mpeg')){
+                setFile(droppedFile);
+            } else alert("File type unsupported")
+            
         }
     }, []);
 
     const handleFileChange = (event : any) => {
         const selectedFile = event.target.files[0];
-        if (selectedFile) {
-            setFile(selectedFile);
+        if (selectedFile && textOne === "Partition") {
+            if (selectedFile.type.startsWith('application/pdf')){
+                setFile(selectedFile);
+            } else alert("File type unsupported")
+            
+        } else if (selectedFile && textOne === "Musique") {
+            if (selectedFile.type.startsWith('audio/mpeg')){
+                setFile(selectedFile);
+            } else alert("File type unsupported")
+            
         }
     };
     
