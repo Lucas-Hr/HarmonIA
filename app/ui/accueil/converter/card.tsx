@@ -24,8 +24,8 @@ export default function Card({setIsConverted , file, setFile, textOne}: CardProp
         } else if (droppedFile && textOne === "Musique") {
             if (droppedFile.type.startsWith('audio/mpeg')){
                 setFile(droppedFile);
-            } else alert("File type unsupported")
-            
+
+            } else alert("File type unsupported")     
         }
     }, []);
 
@@ -39,6 +39,7 @@ export default function Card({setIsConverted , file, setFile, textOne}: CardProp
         } else if (selectedFile && textOne === "Musique") {
             if (selectedFile.type.startsWith('audio/mpeg')){
                 setFile(selectedFile);
+                
             } else alert("File type unsupported")
             
         }
@@ -47,15 +48,29 @@ export default function Card({setIsConverted , file, setFile, textOne}: CardProp
 
     const [isVisible, setIsVisible] = useState(false)
 
-    const converting = (f : File | null) => {
+    const converting = async (f : File | null) => {
         if(f === null){
             alert("Please Insert a file")
-        } else {
-       setIsVisible(true);
-       setTimeout(() => {
-            setIsVisible(false)
-            setIsConverted(true)
-       },5000)   
+        } 
+        else {
+            setIsVisible(true);
+            const formData = new FormData();
+            formData.append("file", f as Blob);
+        //    setTimeout(() => {
+        //         setIsVisible(false)
+        //         setIsConverted(true)
+        //    },5000)   
+            const res = await fetch("http://localhost:5000/predictPdf", {
+                method: "POST",
+                body: formData,
+            });
+            const data = await res.json();
+            if (data.status === 'success') {
+            console.log("Music Data:", data.music_data);
+            setIsConverted(true);
+            } else {
+            console.error("Error:", data.message);
+            }
         }
     }
 
