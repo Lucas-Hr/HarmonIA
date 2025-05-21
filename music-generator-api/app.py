@@ -16,9 +16,11 @@ import base64
 import pretty_midi
 from datetime import datetime
 import soundfile as sf
+import gc
 
 app = Flask(__name__)
-CORS(app)  # Permet les requêtes cross-origin depuis votre application Next.js
+CORS(app, resources={r"/*": {"origins": "http://localhost:3000"}},
+     allow_headers=["Content-Type"], methods=["GET", "POST", "OPTIONS"])  # Permet les requêtes cross-origin depuis votre application Next.js
 
 # Définition de l'architecture du modèle PerformanceNet
 class ConvBlock(nn.Module):
@@ -456,6 +458,16 @@ def predict():
             return jsonify({'status': 'error', 'message': str(e)}), 500
 
 # Generation partition to audio
+        
+# Paramètres
+DURATION = 30
+SR = 22050
+FS = 86
+N_FFT = 254
+HOP_LENGTH = 256
+WIN_LENGTH = 254
+N_ITER = 100
+MAX_FRAMES = 500
 class PianoToAudioModel(nn.Module):
     def __init__(self, input_dim=128, hidden_dim=256, output_dim=128, num_layers=2, dropout=0.6):
         super(PianoToAudioModel, self).__init__()
@@ -513,78 +525,134 @@ model2 = PianoToAudioModel()
 model2.load_state_dict(torch.load("best_piano_to_audio_model17.pth", map_location="cpu"))
 model2.eval()
 
-def midi_to_pianoroll(midi_data, fs=100):
-    pm = pretty_midi.PrettyMIDI(io.BytesIO(midi_data))
-    # piano_roll : shape (128, T)
-    pr = pm.get_piano_roll(fs=fs)
-    # transpose ou normalisation éventuelle
-    return pr.astype(np.float32)
-
-def predict_spectrogram(pianoroll):
-    # On transpose : (notes, T) → (T, notes)
-    if pianoroll.shape[0] == 128:
+def midi_to_pianoroll(midi_data, fs=FS):
+    try:
+        # Vérifier si midi_data est vide
+        if not midi_data:
+            raise ValueError("Fichier MIDI vide ou non fourni")
+        
+        pm = pretty_midi.PrettyMIDI(io.BytesIO(midi_data))
+        end_time = min(pm.get_end_time(), DURATION)
+        if end_time <= 0:
+            raise ValueError("Le fichier MIDI n'a pas de durée valide")
+        
+        times = np.linspace(0, end_time, int(end_time * fs))
+        pianoroll = pm.get_piano_roll(fs=fs, times=times)
         pianoroll = pianoroll.T  # (T, 128)
-    
-    input_tensor = torch.tensor(pianoroll, dtype=torch.float32).unsqueeze(0)  # shape (1, T, 128)
-    lengths = [pianoroll.shape[0]]
+        pianoroll = (pianoroll > 0).astype(np.float32)
+        
+        # Padding ou troncature à MAX_FRAMES
+        current_length = pianoroll.shape[0]
+        if current_length < MAX_FRAMES:
+            padding = np.zeros((MAX_FRAMES - current_length, pianoroll.shape[1]), dtype=np.float32)
+            pianoroll = np.concatenate([pianoroll, padding], axis=0)
+        elif current_length > MAX_FRAMES:
+            pianoroll = pianoroll[:MAX_FRAMES, :]
+        
+        print(f"Pianoroll shape: {pianoroll.shape}")  # Débogage
+        return pianoroll, min(current_length, MAX_FRAMES)
+    except ValueError as e:
+        raise ValueError(f"Erreur de validation MIDI : {e}")
+    except Exception as e:
+        raise RuntimeError(f"Erreur lors de la conversion MIDI en pianoroll : {e}")
 
-    with torch.no_grad():
-        output = model2(input_tensor, lengths)  # output shape: (1, T, output_dim)
+def predict_spectrogram(pianoroll, length, chunk_size=1000):
+    pianoroll_tensor = torch.tensor(pianoroll, dtype=torch.float32)
+    outputs = []
     
-    return output.squeeze(0).T.numpy()  # shape: (output_dim, T)
+    # Traiter par segments
+    for i in range(0, length, chunk_size):
+        chunk = pianoroll_tensor[i:i + chunk_size]  # Segment de taille chunk_size
+        input_tensor = chunk.unsqueeze(0)  # (1, chunk_T, 128)
+        chunk_length = [chunk.shape[0]]
 
-def spectrogram_to_audio(spec, n_fft=1024, hop_length=256, n_iter=60):
+        with torch.no_grad():
+            output = model2(input_tensor, chunk_length)  # output shape: (1, chunk_T, 128)
+            print(f"Output shape for chunk {i}: {output.shape}")  # Débogage
+        outputs.append(output.squeeze(0))  # (chunk_T, 128)
+
+    # Recombinaison des segments
+    full_output = torch.cat(outputs, dim=0)  # (T, 128)
+    print(f"Full output shape: {full_output.shape}")  # Débogage
+    spectrogram = full_output.numpy()
+    # Normalisation comme dans generate_spectrogram
+    spec_min, spec_max = spectrogram.min(), spectrogram.max()
+    spectrogram = np.clip(spectrogram, 0, 1)
+    del pianoroll_tensor, full_output
+    gc.collect()
+    return spectrogram.T, spec_min, spec_max  # (128, T)
+
+def spectrogram_to_audio(spectrogram, spec_min, spec_max):
+    print(f"Spectrogram shape: {spectrogram.shape}")  # Débogage
     # spec doit être magnitude spectrogram
-    audio = librosa.griffinlim(spec,
-                               n_fft=n_fft,
-                               hop_length=hop_length,
-                               win_length=n_fft,
-                               n_iter=n_iter)
+    if spectrogram.shape[0] != N_FFT // 2 + 1:
+        raise ValueError(f"Spectrogram frequency dimension {spectrogram.shape[0]} does not match expected {N_FFT // 2 + 1}")
+    # Inverser la normalisation
+    spectrogram = spectrogram * (spec_max - spec_min) + spec_min
+    spectrogram = np.expm1(spectrogram)
+    spectrogram = np.clip(spectrogram, 0, spectrogram.max() * 1.1)
+    try:
+        audio = librosa.griffinlim(spectrogram, n_iter=N_ITER, hop_length=HOP_LENGTH,
+                                  win_length=WIN_LENGTH, n_fft=N_FFT)
+    except Exception as e:
+        raise RuntimeError(f"Erreur dans griffinlim : {e}")
+    audio = audio / max(abs(audio)) if np.max(np.abs(audio)) > 0 else audio
+    print(f"Audio shape: {audio.shape}")  # Débogage
     return audio
 
 @app.route("/midi-to-audio", methods=["POST"])
 def midi_to_audio_endpoint():
-    file = request.files.get("file")
-    if not file or not file.filename.endswith(".midi"):
-        return jsonify({"error": "No MIDI file"}), 400
+    try:
+        file = request.files.get("file")
+        if not file or not file.filename.endswith(".midi"):
+            return jsonify({"error": "No MIDI file"}), 400
+        midi_bytes = file.read()
+        if not midi_bytes:
+            return jsonify({"error": "Fichier MIDI vide"}), 400
+        
+        pianoroll, length = midi_to_pianoroll(midi_bytes)
+        spec, spec_min, spec_max = predict_spectrogram(pianoroll, length)
+        audio = spectrogram_to_audio(spec, spec_min, spec_max)
 
-    midi_bytes = file.read()
-    pr = midi_to_pianoroll(midi_bytes)
-    spec = predict_spectrogram(pr)
-    audio = spectrogram_to_audio(spec)
-    print(f"spectro : {spec}")
-    print(f"audio : {audio}")
+        # Sauvegarder WAV en mémoire
+        wav_io = io.BytesIO()
+        print(f"Audio length: {len(audio)}, wav_io type: {type(wav_io)}")  # Débogage
+        sf.write(wav_io, audio, SR, format="WAV")
+        wav_io.seek(0)
 
-    # Sauvegarder WAV en mémoire
-    wav_io = io.BytesIO()
-    sf.write(wav_io, audio, samplerate=22050, format="WAV")
-    wav_io.seek(0)
+        # Générer spectrogramme en image (base64)
+        plt.figure(figsize=(6, 4))
+        plt.imshow(20 * np.log10(spec + 1e-6), origin="lower", aspect="auto")
+        plt.axis("off")
+        img_io = io.BytesIO()
+        plt.savefig(img_io, bbox_inches="tight", pad_inches=0, format="png")
+        plt.close()
+        img_io.seek(0)
 
-    # Générer spectrogramme en image (base64)
-    plt.figure(figsize=(6, 4))
-    plt.imshow(20 * np.log10(spec + 1e-6), origin="lower", aspect="auto")
-    plt.axis("off")
-    img_io = io.BytesIO()
-    plt.savefig(img_io, bbox_inches="tight", pad_inches=0)
-    plt.close()
-    img_io.seek(0)
+        # Lire et encoder l'audio
+        wav_io.seek(0)
+        audio_base64 = base64.b64encode(wav_io.read()).decode('utf-8')
 
-    # Lire et encoder l'audio
-    wav_io.seek(0)
-    audio_base64 = base64.b64encode(wav_io.read()).decode('utf-8')
-
-    # Lire et encoder l'image
-    img_io.seek(0)
-    spectrogram_base64 = base64.b64encode(img_io.read()).decode('utf-8')
+        # Lire et encoder l'image
+        img_io.seek(0)
+        spectrogram_base64 = base64.b64encode(img_io.read()).decode('utf-8')
 
 
-    # Retourner les deux dans un JSON
-    return jsonify({
-        'status': 'success',
-        "audio": "data:audio/wav;base64," + audio_base64,
-        "spectrogram": "data:image/png;base64," + spectrogram_base64
-    }), 200
-
+        # Retourner les deux dans un JSON
+        return jsonify({
+            'status': 'success',
+            "audio": "data:audio/wav;base64," + audio_base64,
+            "spectrogram": "data:image/png;base64," + spectrogram_base64
+        }), 200
+    except ValueError as e:
+        app.logger.error(f"Erreur de validation: {str(e)}")
+        return jsonify({"error": str(e)}), 400
+    except RuntimeError as e:
+        app.logger.error(f"Erreur de mémoire ou de traitement: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+    except Exception as e:
+        app.logger.error(f"Erreur inattendue: {str(e)}")
+        return jsonify({"error": f"Erreur interne: {str(e)}"}), 500
 
 @app.route('/health', methods=['GET'])
 def health_check():
