@@ -9,6 +9,8 @@ export default function Page() {
     const [isConverted, setIsConverted] = useState(false);
     const [file, setFile] = useState<File | null>(null);
     const [image, setImage] = useState<string | null>("")
+    const [midiFile, setMidiFile] = useState<string | null>("")
+    const [midiFile64, setMidiFile64] = useState<any | null>("")
     const searchParams = useSearchParams()
     const textOne = searchParams.get('textOne')
     const textTwo = searchParams.get('textTwo')
@@ -17,8 +19,9 @@ export default function Page() {
         className="px-40 h-screen pt-32">
             <Title text1={textOne || ''} text2={textTwo || ''}/>
             <div className="flex justify-center items-center mt-10">
-                <Card setIsConverted={setIsConverted} file ={file} setFile={setFile} textOne={textOne} image={image} setImage={setImage}/>
-                {isConverted && <Result file={file} textOne={textOne} image={image}/>}
+                <Card setIsConverted={setIsConverted} file ={file} 
+                setFile={setFile} textOne={textOne} setImage={setImage} setMidiFile={setMidiFile} setMidiFile64={setMidiFile64}/>
+                {isConverted && <Result file={file} textOne={textOne} image={image} midiFile={midiFile} midiFile64={midiFile64}/>}
             </div>            
         </div>
     )
