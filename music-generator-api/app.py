@@ -3,6 +3,7 @@ from flask_cors import CORS
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.utils.rnn import pack_padded_sequence
 import numpy as np
 import io
 import os
@@ -454,8 +455,61 @@ def predict():
             traceback.print_exc()
             return jsonify({'status': 'error', 'message': str(e)}), 500
 
+class PianoToAudioModel(nn.Module):
+    def __init__(self, input_dim=128, hidden_dim=512, output_dim=128, num_layers=3, dropout=0.6):
+        super(PianoToAudioModel, self).__init__()
+        self.lstm = nn.LSTM(input_size=input_dim, hidden_size=hidden_dim, num_layers=num_layers,
+                            batch_first=True, dropout=dropout if num_layers > 1 else 0)
+        self.attention = nn.MultiheadAttention(embed_dim=hidden_dim, num_heads=8, dropout=dropout)
+        self.bn = nn.BatchNorm1d(hidden_dim)
+        self.conv1 = nn.Conv1d(hidden_dim, hidden_dim, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv1d(hidden_dim, hidden_dim // 2, kernel_size=3, padding=1)
+        self.conv3 = nn.Conv1d(hidden_dim // 2, hidden_dim // 4, kernel_size=3, padding=1)
+        self.dropout = nn.Dropout(dropout)
+        self.relu = nn.ReLU()
+        self.fc = nn.Linear(hidden_dim // 4, output_dim)
+        self.softplus = nn.Softplus()
+
+        self._initialize_weights()
+
+    def _initialize_weights(self):
+        for name, param in self.named_parameters():
+            if 'weight' in name:
+                if param.dim() >= 2:
+                    nn.init.xavier_uniform_(param)
+                else:
+                    nn.init.uniform_(param, -0.1, 0.1)
+            elif 'bias' in name:
+                nn.init.zeros_(param)
+
+    def forward(self, x, lengths):
+        if len(x.shape) == 2:
+            x = x.unsqueeze(0)
+            lengths = [lengths] if not isinstance(lengths, (list, torch.Tensor)) else lengths
+        x_packed = pack_padded_sequence(x, lengths, batch_first=True, enforce_sorted=False)
+        x_packed, _ = self.lstm(x_packed)
+        x, _ = nn.utils.rnn.pad_packed_sequence(x_packed, batch_first=True)
+        x = x.permute(1, 0, 2)
+        attn_output, _ = self.attention(x, x, x)
+        x = x + attn_output
+        x = x.permute(1, 2, 0)
+        x = self.bn(x)
+        x = self.conv1(x)
+        x = self.relu(x)
+        x = self.dropout(x)
+        x = self.conv2(x)
+        x = self.relu(x)
+        x = self.dropout(x)
+        x = self.conv3(x)
+        x = self.relu(x)
+        x = self.dropout(x)
+        x = x.permute(0, 2, 1)
+        x = self.fc(x)
+        return self.softplus(x)
+
 # Charger le modèle génération partition -> audio
-model2 = torch.load("best_piano_to_audio_model17.pth", map_location="cpu")
+model2 = PianoToAudioModel()
+model2.load_state_dict(torch.load("best_piano_to_audio_model17.pth", map_location="cpu"))
 model2.eval()
 
 def midi_to_pianoroll(midi_data, fs=100):
@@ -466,11 +520,17 @@ def midi_to_pianoroll(midi_data, fs=100):
     return pr.astype(np.float32)
 
 def predict_spectrogram(pianoroll):
-    # reshape / batch dimension selon ton modèle
-    x = torch.from_numpy(pianoroll).unsqueeze(0).unsqueeze(0)  # ex.
+    # On transpose : (notes, T) → (T, notes)
+    if pianoroll.shape[0] == 128:
+        pianoroll = pianoroll.T  # (T, 128)
+    
+    input_tensor = torch.tensor(pianoroll, dtype=torch.float32).unsqueeze(0)  # shape (1, T, 128)
+    lengths = [pianoroll.shape[0]]
+
     with torch.no_grad():
-        spec = model(x)  # shape (1, freq_bins, time_frames)
-    return spec.squeeze(0).cpu().numpy()
+        output = model(input_tensor, lengths)  # output shape: (1, T, output_dim)
+    
+    return output.squeeze(0).T.numpy()  # shape: (output_dim, T)
 
 def spectrogram_to_audio(spec, n_fft=1024, hop_length=256, n_iter=60):
     # spec doit être magnitude spectrogram
