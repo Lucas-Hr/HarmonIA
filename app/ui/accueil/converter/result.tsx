@@ -9,11 +9,12 @@ type ResultProps = {
      textOne : string | null,
      image : string | null,
      midiFile : string | null,
-     midiFile64 : any | null
+     midiFile64 : any | null,
+     audioUrl : string | null,
+     spectrogramURL : string | null
 }
 
-export default function Result({file, textOne, image, midiFile, midiFile64} : ResultProps) {
-     const [audioUrl, setAudioUrl] = useState<string | null>("");
+export default function Result({file, textOne, image, midiFile, midiFile64, audioUrl, spectrogramURL} : ResultProps) {
      const [pdfUrl, setPdfUrl] = useState<string | null>("");
      // useEffect(() => {
      //      const url = URL.createObjectURL(file);

@@ -529,7 +529,7 @@ def predict_spectrogram(pianoroll):
     lengths = [pianoroll.shape[0]]
 
     with torch.no_grad():
-        output = model(input_tensor, lengths)  # output shape: (1, T, output_dim)
+        output = model2(input_tensor, lengths)  # output shape: (1, T, output_dim)
     
     return output.squeeze(0).T.numpy()  # shape: (output_dim, T)
 
@@ -545,13 +545,15 @@ def spectrogram_to_audio(spec, n_fft=1024, hop_length=256, n_iter=60):
 @app.route("/midi-to-audio", methods=["POST"])
 def midi_to_audio_endpoint():
     file = request.files.get("file")
-    if not file or not file.filename.endswith(".mid"):
+    if not file or not file.filename.endswith(".midi"):
         return jsonify({"error": "No MIDI file"}), 400
 
     midi_bytes = file.read()
     pr = midi_to_pianoroll(midi_bytes)
     spec = predict_spectrogram(pr)
     audio = spectrogram_to_audio(spec)
+    print(f"spectro : {spec}")
+    print(f"audio : {audio}")
 
     # Sauvegarder WAV en mémoire
     wav_io = io.BytesIO()
@@ -575,11 +577,14 @@ def midi_to_audio_endpoint():
     img_io.seek(0)
     spectrogram_base64 = base64.b64encode(img_io.read()).decode('utf-8')
 
+
     # Retourner les deux dans un JSON
     return jsonify({
+        'status': 'success',
         "audio": "data:audio/wav;base64," + audio_base64,
         "spectrogram": "data:image/png;base64," + spectrogram_base64
     }), 200
+
 
 @app.route('/health', methods=['GET'])
 def health_check():

@@ -10,9 +10,11 @@ type CardProps = {
     file : File | null,
     setFile : (value : File | null) => void,
     textOne : string | null,
-    setImage : (value : string) => void
-    setMidiFile : (value : string) => void
-    setMidiFile64 : (value : any) => void
+    setImage : (value : string) => void,
+    setMidiFile : (value : string) => void,
+    setMidiFile64 : (value : any) => void,
+    setAudioUrl : (value : string) => void,
+    setSpectrogramUrl : (value : string) => void
 };
 
 export default function Card({setIsConverted , file, setFile, textOne, setImage, setMidiFile, setMidiFile64}: CardProps) {
@@ -21,12 +23,12 @@ export default function Card({setIsConverted , file, setFile, textOne, setImage,
         event.preventDefault();
         const droppedFile = event.dataTransfer.files[0];
         if (droppedFile && textOne === "Partition") {
-            if (droppedFile.type.startsWith('application/pdf')){
+            if (droppedFile.type.startsWith('')){
                 setFile(droppedFile);
             } else alert("File type unsupported")
             
         } else if (droppedFile && textOne === "Musique") {
-            if (droppedFile.type.startsWith('audio/mpeg')){
+            if (droppedFile.type.startsWith('audio/wav')){
                 setFile(droppedFile);
             } else alert("File type unsupported")
             
@@ -36,7 +38,7 @@ export default function Card({setIsConverted , file, setFile, textOne, setImage,
     const handleFileChange = (event : any) => {
         const selectedFile = event.target.files[0];
         if (selectedFile && textOne === "Partition") {
-            if (selectedFile.type.startsWith('application/pdf')){
+            if (selectedFile.type.startsWith('')){
                 setFile(selectedFile);
             } else alert("File type unsupported")
             
@@ -54,12 +56,8 @@ export default function Card({setIsConverted , file, setFile, textOne, setImage,
     const converting = async (f : File | null) => {
         if(f === null){
             alert("Please Insert a file")
-        } else {
-       setIsVisible(true);
-    //    setTimeout(() => {
-    //         setIsVisible(false)
-    //         setIsConverted(true)
-    //    },5000)   
+        } else if (textOne === "Musique"){
+            setIsVisible(true);
             const formData = new FormData();
             formData.append('file', f as Blob);
             const res = await fetch("http://localhost:5000/predict", {
@@ -83,6 +81,22 @@ export default function Card({setIsConverted , file, setFile, textOne, setImage,
                 console.error('error' , data.message)
             }
 
+        } else if (textOne === "Partition") {
+            const formData = new FormData();
+            formData.append('file', f as Blob);
+            const res = await fetch("http://localhost:5000/midi-to-audio", {
+                method : "POST",
+                body : formData
+            });
+            const data = await res.json();
+            if (data.status === 'success') {
+                console.log("data : " , data);
+                setIsConverted(true);
+                setIsVisible(false);
+            }
+            else {
+                console.error('error' , data.message)
+            }
         }
     }
 
