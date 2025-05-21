@@ -8,6 +8,7 @@ import { File } from "buffer"
 export default function Page() {
     const [isConverted, setIsConverted] = useState(false);
     const [file, setFile] = useState<File | null>(null);
+    const [image, setImage] = useState<string | null>("")
     const searchParams = useSearchParams()
     const textOne = searchParams.get('textOne')
     const textTwo = searchParams.get('textTwo')
@@ -16,8 +17,8 @@ export default function Page() {
         className="px-40 h-screen pt-32">
             <Title text1={textOne || ''} text2={textTwo || ''}/>
             <div className="flex justify-center items-center mt-10">
-                <Card setIsConverted={setIsConverted} file ={file} setFile={setFile} textOne={textOne} />
-                {isConverted && <Result file={file} textOne={textOne}/>}
+                <Card setIsConverted={setIsConverted} file ={file} setFile={setFile} textOne={textOne} image={image} setImage={setImage}/>
+                {isConverted && <Result file={file} textOne={textOne} image={image}/>}
             </div>            
         </div>
     )
