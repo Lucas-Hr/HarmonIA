@@ -566,15 +566,19 @@ def midi_to_audio_endpoint():
     plt.close()
     img_io.seek(0)
 
-    return send_file(
-        wav_io,
-        mimetype="audio/wav",
-        as_attachment=False,
-        attachment_filename="output.wav"
-    ), 200, {
-      "X-Spectrogram": "data:image/png;base64," + 
-          __import__("base64").b64encode(img_io.read()).decode()
-    }
+    # Lire et encoder l'audio
+    wav_io.seek(0)
+    audio_base64 = base64.b64encode(wav_io.read()).decode('utf-8')
+
+    # Lire et encoder l'image
+    img_io.seek(0)
+    spectrogram_base64 = base64.b64encode(img_io.read()).decode('utf-8')
+
+    # Retourner les deux dans un JSON
+    return jsonify({
+        "audio": "data:audio/wav;base64," + audio_base64,
+        "spectrogram": "data:image/png;base64," + spectrogram_base64
+    }), 200
 
 @app.route('/health', methods=['GET'])
 def health_check():
