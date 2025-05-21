@@ -10,11 +10,12 @@ type CardProps = {
     file : File | null,
     setFile : (value : File | null) => void,
     textOne : string | null,
-    image : string | null,
     setImage : (value : string) => void
+    setMidiFile : (value : string) => void
+    setMidiFile64 : (value : any) => void
 };
 
-export default function Card({setIsConverted , file, setFile, textOne,image, setImage}: CardProps) {
+export default function Card({setIsConverted , file, setFile, textOne, setImage, setMidiFile, setMidiFile64}: CardProps) {
 
     const handleDrop = useCallback((event : any) => {
         event.preventDefault();
@@ -72,6 +73,10 @@ export default function Card({setIsConverted , file, setFile, textOne,image, set
                 setImage(`data:image/png;base64,${base64}`);
                 setIsConverted(true);
                 setIsVisible(false);
+                const midiFile = data.music_data.midi_filename;
+                const midiFile64 = data.music_data.midi_base64;
+                setMidiFile(midiFile)
+                setMidiFile64(midiFile64)
                 
             }
             else {
