@@ -455,8 +455,9 @@ def predict():
             traceback.print_exc()
             return jsonify({'status': 'error', 'message': str(e)}), 500
 
+# Generation partition to audio
 class PianoToAudioModel(nn.Module):
-    def __init__(self, input_dim=128, hidden_dim=512, output_dim=128, num_layers=3, dropout=0.6):
+    def __init__(self, input_dim=128, hidden_dim=256, output_dim=128, num_layers=2, dropout=0.6):
         super(PianoToAudioModel, self).__init__()
         self.lstm = nn.LSTM(input_size=input_dim, hidden_size=hidden_dim, num_layers=num_layers,
                             batch_first=True, dropout=dropout if num_layers > 1 else 0)
@@ -468,7 +469,7 @@ class PianoToAudioModel(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.relu = nn.ReLU()
         self.fc = nn.Linear(hidden_dim // 4, output_dim)
-        self.softplus = nn.Softplus()
+        self.sigmoid = nn.Sigmoid()
 
         self._initialize_weights()
 
@@ -505,7 +506,7 @@ class PianoToAudioModel(nn.Module):
         x = self.dropout(x)
         x = x.permute(0, 2, 1)
         x = self.fc(x)
-        return self.softplus(x)
+        return self.sigmoid(x)
 
 # Charger le modèle génération partition -> audio
 model2 = PianoToAudioModel()
