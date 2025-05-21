@@ -3,15 +3,18 @@ import Image from "next/image";
 import { useCallback } from "react";
 import { useState } from "react";
 import { motion } from "framer-motion";
+import { error } from "console";
 
 type CardProps = {
     setIsConverted: (value: boolean) => void,
     file : File | null,
     setFile : (value : File | null) => void,
-    textOne : string | null
+    textOne : string | null,
+    image : string | null,
+    setImage : (value : string) => void
 };
 
-export default function Card({setIsConverted , file, setFile, textOne}: CardProps) {
+export default function Card({setIsConverted , file, setFile, textOne,image, setImage}: CardProps) {
 
     const handleDrop = useCallback((event : any) => {
         event.preventDefault();
@@ -37,25 +40,44 @@ export default function Card({setIsConverted , file, setFile, textOne}: CardProp
             } else alert("File type unsupported")
             
         } else if (selectedFile && textOne === "Musique") {
-            if (selectedFile.type.startsWith('audio/mpeg')){
+            if (selectedFile.type.startsWith('audio/wav')){
                 setFile(selectedFile);
             } else alert("File type unsupported")
             
         }
-    };
-    
+    }; 
 
     const [isVisible, setIsVisible] = useState(false)
 
-    const converting = (f : File | null) => {
+
+    const converting = async (f : File | null) => {
         if(f === null){
             alert("Please Insert a file")
         } else {
        setIsVisible(true);
-       setTimeout(() => {
-            setIsVisible(false)
-            setIsConverted(true)
-       },5000)   
+    //    setTimeout(() => {
+    //         setIsVisible(false)
+    //         setIsConverted(true)
+    //    },5000)   
+            const formData = new FormData();
+            formData.append('file', f as Blob);
+            const res = await fetch("http://localhost:5000/predict", {
+                method : "POST",
+                body : formData
+            });
+            const data = await res.json();
+            if (data.status === 'success') {
+                console.log("Music_data" , data);
+                const base64 = data.music_data.image_base64;
+                setImage(`data:image/png;base64,${base64}`);
+                setIsConverted(true);
+                setIsVisible(false);
+                
+            }
+            else {
+                console.error('error' , data.message)
+            }
+
         }
     }
 

@@ -1,3 +1,4 @@
+
 from flask import Flask, request, jsonify
 import torch
 import torch.nn as nn
@@ -7,6 +8,10 @@ import io
 import os
 import librosa
 from flask_cors import CORS
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('Agg')  # Important pour l'utilisation non-interactive (serveur)
+import base64
 
 app = Flask(__name__)
 CORS(app)  # Permet les requêtes cross-origin depuis votre application Next.js
@@ -76,7 +81,7 @@ def load_model():
     model = PerformanceNetModel(input_channels=1, output_channels=1)
     
     # Charger les poids pré-entraînés
-    model_path = 'bestmodel.pth'
+    model_path = 'PerformanceNet_model.pth'
     if os.path.exists(model_path):
         model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
         model.eval()  # Mettre le modèle en mode évaluation
@@ -125,6 +130,7 @@ def audio_to_melspectrogram(audio_bytes):
     except Exception as e:
         raise Exception(f"Erreur lors du prétraitement audio: {str(e)}")
 
+
 @app.route('/predict', methods=['POST'])
 def predict():
     if request.method == 'POST':
@@ -137,12 +143,17 @@ def predict():
         if file.filename == '':
             return jsonify({'error': 'Aucun fichier sélectionné'}), 400
         
+        # Récupérer le seuil de la requête (s'il est fourni) ou utiliser une valeur par défaut plus basse
+        threshold = float(request.form.get('threshold', 0.2))  # Valeur par défaut plus basse: 0.2 au lieu de 0.5
+        
+        # Récupérer les paramètres d'affichage (optionnels)
+        max_display_length = int(request.form.get('max_display_length', 500))  # Nombre maximum de frames à afficher
+        
         try:
             # Lire le fichier audio
             audio_bytes = file.read()
             
             # Convertir en mel-spectrogramme
-            # Le résultat est déjà dans la forme (T, n_mels) attendue par le modèle
             mel_spec = audio_to_melspectrogram(audio_bytes)
             
             # Convertir en tensor et ajouter la dimension de batch
@@ -155,24 +166,209 @@ def predict():
                 # Convertir le résultat en numpy pour le traitement
                 pianoroll = output.squeeze(0).cpu().numpy()
                 
-                # Appliquer un seuil pour obtenir des notes binaires (activées/désactivées)
-                threshold = 0.5
+                # Informations de débogage
+                print(f"Piano roll shape: {pianoroll.shape}")
+                print(f"Piano roll min et max: {pianoroll.min()} {pianoroll.max()}")
+                
+                # Afficher un échantillon des valeurs maximales
+                top_values = np.sort(pianoroll.flatten())[-10:]  # Les 10 plus grandes valeurs
+                print(f"Top 10 valeurs: {top_values}")
+                
+                # Utiliser le seuil adaptatif si aucun seuil n'est fourni
+                if 'threshold' not in request.form:
+                    # Seuil adaptatif: calculer le seuil en fonction des données
+                    if pianoroll.max() < 0.5:
+                        # Si toutes les valeurs sont < 0.5, prendre un percentile élevé comme seuil
+                        adaptive_threshold = np.percentile(pianoroll, 99)  # 99ème percentile
+                        print(f"Utilisation d'un seuil adaptatif (99ème percentile): {adaptive_threshold}")
+                        threshold = adaptive_threshold
+                
+                print(f"Seuil utilisé: {threshold}")
+                
+                # Appliquer le seuil pour obtenir des notes binaires
                 binary_roll = (pianoroll > threshold).astype(np.int8)
                 
-                # Convertir en liste pour JSON
+                # Vérifier combien de notes sont détectées
+                nb_notes = np.sum(binary_roll)
+                print(f"Nombre de notes détectées avec seuil {threshold}: {nb_notes}")
+                percentage = 100 * nb_notes / binary_roll.size
+                print(f"Pourcentage de cellules activées: {percentage:.4f}%")
+                
+                # Si trop peu de notes sont détectées, générer un avertissement
+                warning_message = None
+                if nb_notes < 10:
+                    warning_message = f"Seulement {nb_notes} notes détectées avec un seuil de {threshold}. " \
+                                     f"Essayez de réduire le seuil ou d'utiliser un autre fichier audio."
+                
+                # OPTIMISATION DE L'AFFICHAGE: Trouver les segments pertinents
+                if nb_notes > 0:
+                    # Déterminer les limites pertinentes pour le graphique
+                    active_frames = np.where(np.sum(binary_roll, axis=1) > 0)[0]
+                    
+                    if len(active_frames) > 0:
+                        # Trouver les limites des régions actives
+                        start_frame = max(0, active_frames[0] - 10)  # 10 frames avant la première note
+                        end_frame = min(pianoroll.shape[0], active_frames[-1] + 10)  # 10 frames après la dernière note
+                        
+                        # Si la région est trop grande, identifier les segments les plus denses
+                        display_length = end_frame - start_frame
+                        if display_length > max_display_length:
+                            # Diviser en fenêtres et trouver les fenêtres les plus actives
+                            window_size = 50  # taille de la fenêtre d'analyse
+                            activity = []
+                            
+                            for i in range(0, pianoroll.shape[0] - window_size, window_size // 2):  # Chevauchement de 50%
+                                window_activity = np.sum(binary_roll[i:i+window_size])
+                                activity.append((i, window_activity))
+                            
+                            # Trier les fenêtres par activité décroissante
+                            activity.sort(key=lambda x: x[1], reverse=True)
+                            
+                            # Utiliser les N premières fenêtres les plus actives pour rester sous max_display_length
+                            top_windows = []
+                            cumulative_length = 0
+                            for win_start, _ in activity:
+                                if cumulative_length < max_display_length:
+                                    win_end = min(win_start + window_size, pianoroll.shape[0])
+                                    top_windows.append((win_start, win_end))
+                                    cumulative_length += win_end - win_start
+                                else:
+                                    break
+                            
+                            # Fusionner les fenêtres qui se chevauchent
+                            if top_windows:
+                                top_windows.sort()  # Trier par temps croissant
+                                merged_windows = [top_windows[0]]
+                                
+                                for current_start, current_end in top_windows[1:]:
+                                    prev_start, prev_end = merged_windows[-1]
+                                    if current_start <= prev_end:
+                                        # Les fenêtres se chevauchent
+                                        merged_windows[-1] = (prev_start, max(prev_end, current_end))
+                                    else:
+                                        # Nouvelle fenêtre
+                                        merged_windows.append((current_start, current_end))
+                                
+                                # Utiliser ces segments pour l'affichage
+                                display_segments = merged_windows
+                            else:
+                                # Fallback: afficher le début jusqu'à max_display_length
+                                display_segments = [(0, min(max_display_length, pianoroll.shape[0]))]
+                        else:
+                            # La région active est assez petite pour être entièrement affichée
+                            display_segments = [(start_frame, end_frame)]
+                    else:
+                        # Aucune note active, afficher juste le début
+                        display_segments = [(0, min(max_display_length, pianoroll.shape[0]))]
+                else:
+                    # Aucune note détectée, montrer juste le début du pianoroll
+                    display_segments = [(0, min(max_display_length, pianoroll.shape[0]))]
+                
+                # Créer une figure pour chaque segment et les concaténer
+                plt.figure(figsize=(12, 8))
+                
+                # S'il y a plusieurs segments, utiliser une mise en page subplots
+                n_segments = len(display_segments)
+                total_display_frames = sum(end - start for start, end in display_segments)
+                
+                # Si on a trop de segments, on en limite le nombre
+                if n_segments > 3:  # Limiter à 3 segments au maximum
+                    display_segments = display_segments[:3]
+                    n_segments = 3
+                
+                # Créer un affichage pour les probabilités brutes
+                plt.subplot(2, 1, 1)
+                
+                if n_segments == 1:
+                    # Un seul segment: afficher normalement
+                    start, end = display_segments[0]
+                    plt.imshow(pianoroll[start:end].T, aspect='auto', origin='lower', cmap='hot', interpolation='nearest')
+                    plt.title(f'Pianoroll - Probabilités brutes (frames {start}-{end}, max={pianoroll.max():.4f})')
+                else:
+                    # Plusieurs segments: créer une image composite
+                    segment_images = []
+                    segment_labels = []
+                    
+                    for i, (start, end) in enumerate(display_segments):
+                        segment_images.append(pianoroll[start:end].T)
+                        segment_labels.append(f"{start}-{end}")
+                    
+                    # Ajouter des séparateurs verticaux entre segments
+                    composite_image = np.hstack([np.ones((pianoroll.shape[1], 3)) * -1] + 
+                                              [np.hstack([img, np.ones((pianoroll.shape[1], 3)) * -1]) 
+                                               for img in segment_images])
+                    
+                    plt.imshow(composite_image, aspect='auto', origin='lower', cmap='hot', interpolation='nearest')
+                    plt.title(f'Pianoroll - Probabilités brutes (segments: {", ".join(segment_labels)}, max={pianoroll.max():.4f})')
+                
+                plt.colorbar(label='Probabilités de notes (valeurs brutes)')
+                plt.xlabel('Temps (frames)')
+                plt.ylabel('Notes (MIDI)')
+                plt.grid(True, linestyle='--', alpha=0.7)
+                
+                # Créer un affichage pour le pianoroll binaire
+                plt.subplot(2, 1, 2)
+                
+                if n_segments == 1:
+                    # Un seul segment: afficher normalement
+                    start, end = display_segments[0]
+                    plt.imshow(binary_roll[start:end].T, aspect='auto', origin='lower', cmap='Blues', interpolation='nearest')
+                    plt.title(f'Pianoroll binaire - {nb_notes} notes (frames {start}-{end})')
+                else:
+                    # Plusieurs segments: créer une image composite
+                    segment_images = []
+                    
+                    for start, end in display_segments:
+                        segment_images.append(binary_roll[start:end].T)
+                    
+                    # Ajouter des séparateurs verticaux entre segments
+                    composite_image = np.hstack([np.ones((binary_roll.shape[1], 3)) * -1] + 
+                                              [np.hstack([img, np.ones((binary_roll.shape[1], 3)) * -1]) 
+                                               for img in segment_images])
+                    
+                    plt.imshow(composite_image, aspect='auto', origin='lower', cmap='Blues', interpolation='nearest')
+                    plt.title(f'Pianoroll binaire - {nb_notes} notes détectées')
+                
+                plt.colorbar(label=f'Notes binaires (seuil={threshold:.4f})')
+                plt.xlabel('Temps (frames)')
+                plt.ylabel('Notes (MIDI)')
+                plt.grid(True, linestyle='--', alpha=0.7)
+                
+                plt.tight_layout()
+                
+                # Enregistrer l'image
+                buf = io.BytesIO()
+                plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+                plt.close()
+                buf.seek(0)
+                img_base64 = base64.b64encode(buf.read()).decode('utf-8')
+                
+                # Préparer la réponse avec les données
                 result = {
                     'pianoroll': binary_roll.tolist(),
                     'probabilities': pianoroll.tolist(),
                     'shape': pianoroll.shape,
                     'timesteps': pianoroll.shape[0],
-                    'notes': pianoroll.shape[1] if len(pianoroll.shape) > 1 else 88
+                    'notes': pianoroll.shape[1],
+                    'image_base64': img_base64,
+                    'threshold_used': float(threshold),
+                    'max_probability': float(pianoroll.max()),
+                    'notes_detected': int(nb_notes),
+                    'percentage_active': float(percentage),
+                    'display_segments': [{'start': int(start), 'end': int(end)} for start, end in display_segments]
                 }
                 
-                return jsonify(result)
+                if warning_message:
+                    result['warning'] = warning_message
+                
+                status = 'warning' if warning_message else 'success'
+                return jsonify({'status': status, 'music_data': result})
                 
         except Exception as e:
-            return jsonify({'error': str(e)}), 500
-
+            print(f"ERREUR: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({'status': 'error', 'message': str(e)}), 500
 @app.route('/health', methods=['GET'])
 def health_check():
     return jsonify({'status': 'OK', 'message': 'Le serveur API est opérationnel'})
