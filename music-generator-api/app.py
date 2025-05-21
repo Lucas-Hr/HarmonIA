@@ -1,5 +1,5 @@
 
-'''from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -835,4 +835,4 @@ def health_check():
     return jsonify({'status': 'OK', 'message': 'Le serveur API est opérationnel'})
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)    
+    app.run(debug=True, host='0.0.0.0', port=5000)
