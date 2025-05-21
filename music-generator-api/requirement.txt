@@ -1,0 +1,10 @@
+# Requis pour l'API de génération de musique
+flask
+flask-cors
+torch
+torchvision
+numpy
+Pillow
+librosa
+soundfile
+requests

@@ -3,73 +3,104 @@ import Image from "next/image";
 import { useCallback } from "react";
 import { useState } from "react";
 import { motion } from "framer-motion";
+import { error } from "console";
 
 type CardProps = {
     setIsConverted: (value: boolean) => void,
     file : File | null,
     setFile : (value : File | null) => void,
-    textOne : string | null
+    textOne : string | null,
+    setImage : (value : string) => void,
+    setMidiFile : (value : string) => void,
+    setMidiFile64 : (value : any) => void,
+    setAudioUrl : (value : string) => void,
+    setSpectrogramUrl : (value : string) => void
 };
 
-export default function Card({setIsConverted , file, setFile, textOne}: CardProps) {
+export default function Card({setIsConverted , file, setFile, textOne, setImage, setMidiFile, setMidiFile64, setAudioUrl, setSpectrogramUrl}: CardProps) {
 
     const handleDrop = useCallback((event : any) => {
         event.preventDefault();
         const droppedFile = event.dataTransfer.files[0];
         if (droppedFile && textOne === "Partition") {
-            if (droppedFile.type.startsWith('application/pdf')){
+            if (droppedFile.type.startsWith('')){
                 setFile(droppedFile);
             } else alert("File type unsupported")
             
         } else if (droppedFile && textOne === "Musique") {
-            if (droppedFile.type.startsWith('audio/mpeg')){
+            if (droppedFile.type.startsWith('audio/wav')){
                 setFile(droppedFile);
-
-            } else alert("File type unsupported")     
+            } else alert("File type unsupported")
+            
         }
     }, []);
 
     const handleFileChange = (event : any) => {
         const selectedFile = event.target.files[0];
         if (selectedFile && textOne === "Partition") {
-            if (selectedFile.type.startsWith('application/pdf')){
+            if (selectedFile.type.startsWith('')){
                 setFile(selectedFile);
             } else alert("File type unsupported")
             
         } else if (selectedFile && textOne === "Musique") {
-            if (selectedFile.type.startsWith('audio/mpeg')){
+            if (selectedFile.type.startsWith('audio/wav')){
                 setFile(selectedFile);
-                
             } else alert("File type unsupported")
             
         }
-    };
-    
+    }; 
 
     const [isVisible, setIsVisible] = useState(false)
+
 
     const converting = async (f : File | null) => {
         if(f === null){
             alert("Please Insert a file")
-        } 
-        else {
+        } else if (textOne === "Musique"){
             setIsVisible(true);
             const formData = new FormData();
-            formData.append("file", f as Blob);
-        //    setTimeout(() => {
-        //         setIsVisible(false)
-        //         setIsConverted(true)
-        //    },5000)   
-            const res = await fetch("http://localhost:5000/predictPdf", {
-                method: "POST",
-                body: formData,
+            formData.append('file', f as Blob);
+            const res = await fetch("http://localhost:5000/predict", {
+                method : "POST",
+                body : formData
             });
             const data = await res.json();
             if (data.status === 'success') {
-            console.log("Music Data:", data.music_data);
-            setIsConverted(true);
-            } else {
-            console.error("Error:", data.message);
+                console.log("Music_data" , data);
+                const base64 = data.music_data.image_base64;
+                setImage(`data:image/png;base64,${base64}`);
+                setIsConverted(true);
+                setIsVisible(false);
+                const midiFile = data.music_data.midi_filename;
+                const midiFile64 = data.music_data.midi_base64;
+                setMidiFile(midiFile)
+                setMidiFile64(midiFile64)
+                
+            }
+            else {
+                console.error('error' , data.message)
+            }
+
+        } else if (textOne === "Partition") {
+            setIsVisible(true)
+            const formData = new FormData();
+            formData.append('file', f as Blob);
+            const res = await fetch("http://localhost:5000/midi-to-audio", {
+                method : "POST",
+                body : formData
+            });
+            const data = await res.json();
+            if (data.status === 'success') {
+                console.log("data : " , data);
+                const audio= data.audio;
+                const spectrogram = data.spectrogram;
+                setAudioUrl(audio);
+                setSpectrogramUrl(spectrogram);
+                setIsConverted(true);
+                setIsVisible(false);
+            }
+            else {
+                console.error('error' , data.error)
             }
         }
     }
