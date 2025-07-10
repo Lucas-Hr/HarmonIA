@@ -20,7 +20,7 @@ export default function Navbar() {
     return (
         <div className="flex items-center p-5 text-white border-b-2 border-[#404040] bg-[#070707] fixed w-full px-40 justify-between z-4 relative">
             <div className="flex ">
-                <Image src='/logo_ispm.png' width={50} height={20} alt="ispm" />
+                <Image src='/logo_ispm.png' width={50} height={20} alt="ispm" className="rounded-[100%]" />
                 <h1 className={` ms-4 text-3xl ${ericaOne.className}`}>HarmonIA</h1>
             </div>
             <div className="ml-5 text-base flex">

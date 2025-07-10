@@ -9,11 +9,14 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@tonejs/midi": "^2.0.28",
     "framer-motion": "^12.12.1",
+    "html2canvas": "^1.4.1",
     "next": "15.3.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "swiper": "^11.2.6"
+    "swiper": "^11.2.6",
+    "vexflow": "^5.0.0"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",

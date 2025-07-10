@@ -15,9 +15,13 @@ type CardProps = {
     setMidiFile64 : (value : any) => void,
     setAudioUrl : (value : string) => void,
     setSpectrogramUrl : (value : string) => void
+    // setABCNotation : (value : string) => void
+    setXmlFile64 : (value : any) => void,
+    setXmlFile : (value : string) => void,
+    
 };
 
-export default function Card({setIsConverted , file, setFile, textOne, setImage, setMidiFile, setMidiFile64, setAudioUrl, setSpectrogramUrl}: CardProps) {
+export default function Card({setIsConverted , file, setFile, textOne, setImage, setMidiFile, setMidiFile64, setAudioUrl, setSpectrogramUrl, setXmlFile64, setXmlFile}: CardProps) {
 
     const handleDrop = useCallback((event : any) => {
         event.preventDefault();
@@ -68,6 +72,8 @@ export default function Card({setIsConverted , file, setFile, textOne, setImage,
             if (data.status === 'success') {
                 console.log("Music_data" , data);
                 const base64 = data.music_data.image_base64;
+                const abc_notation = data.music_data.abc_notation;
+                // setABCNotation(abc_notation)
                 setImage(`data:image/png;base64,${base64}`);
                 setIsConverted(true);
                 setIsVisible(false);
@@ -75,6 +81,11 @@ export default function Card({setIsConverted , file, setFile, textOne, setImage,
                 const midiFile64 = data.music_data.midi_base64;
                 setMidiFile(midiFile)
                 setMidiFile64(midiFile64)
+                const xmlFile = data.music_data.xml_filename;
+                const xmlFile64 = data.music_data.xml_base64;
+                setXmlFile(xmlFile);
+                setXmlFile64(xmlFile64);
+                
                 
             }
             else {
@@ -94,6 +105,7 @@ export default function Card({setIsConverted , file, setFile, textOne, setImage,
                 console.log("data : " , data);
                 const audio= data.audio;
                 const spectrogram = data.spectrogram;
+                const abcNotation = data.abc_notation;
                 setAudioUrl(audio);
                 setSpectrogramUrl(spectrogram);
                 setIsConverted(true);

@@ -11,29 +11,16 @@ type ResultProps = {
      midiFile : string | null,
      midiFile64 : any | null,
      audioUrl : string | null,
-     spectrogramURL : string | null
+     spectrogramURL : string | null,
+     abcNotation : string | null,
+     xmlFile : string | null,
+     xmlFile64 : any | null,
 }
 
-export default function Result({file, textOne, image, midiFile, midiFile64, audioUrl, spectrogramURL} : ResultProps) {
-     // useEffect(() => {
-     //      const url = URL.createObjectURL(file);
-     //      if (textOne === "Partition"){
-     //           setPdfUrl(url);
-     //      } else setAudioUrl(url)
-     // },[])
-
-     // const download = (f : any) => {
-     //      if (!f) return;
-     //      // const url = URL.createObjectURL(f); // Create a blob URL for the File   
-     //      const link = document.createElement("a");
-     //      link.href = f;
-     //      link.download = f.name; // Suggested filename
-     //      document.body.appendChild(link);
-     //      link.click();
-     //      document.body.removeChild(link);
-     //      // URL.revokeObjectURL(url); // Free memory
-     //      // console.log(audioUrl)          
-     // }
+export default function Result({file, textOne, image, midiFile, midiFile64, audioUrl, spectrogramURL, abcNotation, xmlFile,xmlFile64} : ResultProps) {
+     useEffect(() => {
+         
+}    ,[])
 
      const downloadBoth = (file1: string, name1: string, file2: string, name2: string) => {
           if (!file1 || !file2) return;
@@ -49,6 +36,7 @@ export default function Result({file, textOne, image, midiFile, midiFile64, audi
       
           downloadFile(file1, name1);
           downloadFile(file2, name2);
+          // downloadFile(file3, name3);
       };
 
       const base64ToUrl = (base64Data : any, mimeType : any) => {
@@ -64,24 +52,11 @@ export default function Result({file, textOne, image, midiFile, midiFile64, audi
           return URL.createObjectURL(blob);
         };
 
-       // Fonction pour télécharger le fichier MIDI
-     const downloadMidi = () => {
-          if (midiFile64 && midiFile) {
-          const midiUrl = base64ToUrl(midiFile64, 'audio/midi');
-          
-          const link = document.createElement('a');
-          link.href = midiUrl;
-          link.download = midiFile;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          URL.revokeObjectURL(midiUrl);
-          }
-     };
-
      const downloadMidiAndImage = () => {
-          if (midiFile64 && image) {
+          if (midiFile64 && image && xmlFile64) {
             const midiUrl = base64ToUrl(midiFile64, 'audio/midi');
+            const xmlUrl = base64ToUrl(midiFile64, 'audio/xml');
+            
 
             // Télécharger les deux fichiers
             downloadBoth(midiUrl, 'midi version.mid', image, 'piano roll.png');
@@ -102,10 +77,11 @@ export default function Result({file, textOne, image, midiFile, midiFile64, audi
             duration : 0.5
            }}
            >
-               {image && midiFile && (
+               {image && midiFile &&(
                     <>
                          <Image src={image} width={200} height={200} alt="piano rolls"/>
                          <p className="mt-2">{file.name}</p>
+                         {/* <p className="mt-2">{abcNotation}</p> */}
                          <button className="bg-white text-black px-5 py-2 rounded-lg mt-4 cursor-pointer w-full flex justify-center hover:bg-[#DCDCDC]" onClick={downloadMidiAndImage}><Image src="/download.svg" width={25} height={25} alt="download"/>Telecharger</button>
                     </>
                )}
@@ -116,7 +92,7 @@ export default function Result({file, textOne, image, midiFile, midiFile64, audi
                               <source src={audioUrl} />
                          </audio>
                          <Image src={spectrogramURL} width={200} height={200} alt="spectrogram" className="mt-2"/>
-                         <p className="mt-2">{file.name}</p>
+                         <p className="mt-2 txt-center">{file.name}</p>
                          <button className="bg-white text-black px-5 py-2 rounded-lg mt-4 cursor-pointer w-full flex justify-center hover:bg-[#DCDCDC]" onClick={() => downloadBoth(audioUrl, "Audio.wav", spectrogramURL, "spectrogram.jpg")}><Image src="/download.svg" width={25} height={25} alt="download"/>Telecharger</button>
                     </>   
                )}

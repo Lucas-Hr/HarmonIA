@@ -17,10 +17,171 @@ import pretty_midi
 from datetime import datetime
 import soundfile as sf
 import gc
+import re
+from music21 import converter, stream, meter, key, pitch, duration, note, chord,environment
+import os
+import tempfile
+
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "http://localhost:3000"}},
      allow_headers=["Content-Type"], methods=["GET", "POST", "OPTIONS"])  # Permet les requêtes cross-origin depuis votre application Next.js
+
+class MidiToSheetConverter:
+    def __init__(self, midi_file_path):
+        self.midi_file_path = midi_file_path
+        self.score = None
+
+    def load_midi(self):
+        """Load MIDI file and convert to music21 stream"""
+        try:
+            self.score = converter.parse(self.midi_file_path)
+            print(f"Successfully loaded MIDI file: {self.midi_file_path}")
+            return True
+        except Exception as e:
+            print(f"Error loading MIDI file: {e}")
+            return False
+
+    def analyze_score(self):
+        """Analyze the musical content of the score"""
+        if not self.score:
+            print("No score loaded. Please load a MIDI file first.")
+            return
+
+        # Get key signature
+        key_sig = self.score.analyze('key')
+        print(f"Key signature: {key_sig}")
+
+        # Get time signature
+        time_sigs = self.score.flat.getElementsByClass(meter.TimeSignature)
+        if time_sigs:
+            print(f"Time signature: {time_sigs[0]}")
+
+        # Get tempo
+        tempos = self.score.flat.getElementsByClass('TempoIndication')
+        if tempos:
+            print(f"Tempo: {tempos[0]}")
+
+        # Count parts/instruments
+        parts = self.score.parts
+        print(f"Number of parts: {len(parts)}")
+
+        return {
+            'key': str(key_sig),
+            'time_signature': str(time_sigs[0]) if time_sigs else 'Not found',
+            'parts_count': len(parts)
+        }
+
+    def generate_musicxml(self, output_path=None):
+        """Generate MusicXML from the score"""
+        if not self.score:
+            print("No score loaded. Please load a MIDI file first.")
+            return None
+
+        if output_path is None:
+            output_path = os.path.splitext(self.midi_file_path)[0] + '.musicxml'
+
+        try:
+            self.score.write('musicxml', fp=output_path)
+            print(f"MusicXML saved to: {output_path}")
+            return output_path
+        except Exception as e:
+            print(f"Error generating MusicXML: {e}")
+            return None
+
+    def generate_png(self, output_path=None):
+        """Generate PNG image of the music sheet"""
+        if not self.score:
+            print("No score loaded. Please load a MIDI file first.")
+            return None
+    
+        musicxml_path = os.path.splitext(self.midi_file_path)[0] + '.musicxml'
+        self.generate_musicxml(musicxml_path)
+    
+        if output_path is None:
+            output_path = os.path.splitext(self.midi_file_path)[0] + '.png'
+    
+        try:
+            command = f'"{us["musescoreDirectPNGPath"]}" "{musicxml_path}" -o "{output_path}"'
+            result = os.system(command)
+            if result == 0 and os.path.exists(output_path):
+                print(f"PNG saved to: {output_path}")
+                return output_path
+            else:
+                print("MuseScore command failed, or PNG not generated.")
+                return None
+        except Exception as e:
+            print(f"Error generating PNG: {e}")
+            return None
+
+    def simplify_score(self, max_parts=4):
+        """Simplify the score for better display"""
+        if not self.score:
+            return None
+
+        # If there are too many parts, combine or select the most important ones
+        if len(self.score.parts) > max_parts:
+            # Keep the first few parts (usually melody and bass)
+            simplified = stream.Score()
+            for i, part in enumerate(self.score.parts[:max_parts]):
+                simplified.append(part)
+            self.score = simplified
+
+        # Remove very short notes that might clutter the display
+        for part in self.score.parts:
+            for element in part.flat:
+                if hasattr(element, 'duration') and element.duration.quarterLength < 0.125:
+                    part.remove(element)
+
+        return self.score
+
+    def get_json_representation(self):
+        """Get a JSON representation of the score for web display"""
+        if not self.score:
+            return None
+
+        score_data = {
+            'parts': [],
+            'metadata': {}
+        }
+
+        # Add metadata
+        key_sig = self.score.analyze('key')
+        score_data['metadata']['key'] = str(key_sig)
+
+        time_sigs = self.score.flat.getElementsByClass(meter.TimeSignature)
+        if time_sigs:
+            score_data['metadata']['time_signature'] = str(time_sigs[0])
+
+        # Process each part
+        for i, part in enumerate(self.score.parts):
+            part_data = {
+                'part_number': i,
+                'instrument': str(part.getInstrument()) if part.getInstrument() else 'Unknown',
+                'notes': []
+            }
+
+            for element in part.flat:
+                if isinstance(element, note.Note):
+                    note_data = {
+                        'type': 'note',
+                        'pitch': str(element.pitch),
+                        'duration': float(element.duration.quarterLength),
+                        'offset': float(element.offset)
+                    }
+                    part_data['notes'].append(note_data)
+                elif isinstance(element, chord.Chord):
+                    chord_data = {
+                        'type': 'chord',
+                        'pitches': [str(p) for p in element.pitches],
+                        'duration': float(element.duration.quarterLength),
+                        'offset': float(element.offset)
+                    }
+                    part_data['notes'].append(chord_data)
+
+            score_data['parts'].append(part_data)
+
+        return score_data
 
 # Définition de l'architecture du modèle PerformanceNet
 class ConvBlock(nn.Module):
@@ -194,6 +355,72 @@ def pianoroll_to_midi(pianoroll, threshold=0.5, fs=16000, hop_length=256):
     
     return midi_bytes.getvalue()
 
+def midi_to_musicxml(midi_file_path, xml_file_path):
+    """
+    Converts a MIDI file to MusicXML using music21.
+
+    Args:
+        midi_file_path: Path to the input MIDI file.
+        xml_file_path: Path to save the output MusicXML file.
+    """
+    try:
+        midi_stream = converter.parse(midi_file_path)
+        midi_stream.write('musicxml', fp=xml_file_path)
+        print(f"Successfully converted {midi_file_path} to {xml_file_path}")
+    except Exception as e:
+        print(f"Error converting {midi_file_path}: {e}")
+
+
+
+# --- 2. Functions for Piano Roll to ABC (from your input) ---
+
+def extract_notes_from_piano_roll(piano_roll, time_resolution=0.1, velocity_threshold=0.5):
+    notes = []
+    # Iterate over each MIDI key (0-87 for 21-108)
+    for key_idx in range(piano_roll.shape[1]): # Use piano_roll.shape[1] for actual number of keys
+        midi_note = key_idx + 21 # MIDI notes from 21 (A0) to 108 (C8)
+        key_data = piano_roll[:, key_idx] # All frames for this single key
+
+        in_note = False
+        note_start_frame = 0
+
+        for frame_idx in range(len(key_data)):
+            if key_data[frame_idx] > velocity_threshold and not in_note:
+                # Note starts
+                note_start_frame = frame_idx
+                in_note = True
+            elif key_data[frame_idx] <= velocity_threshold and in_note:
+                # Note ends
+                note_end_frame = frame_idx
+                duration_frames = note_end_frame - note_start_frame
+                
+                # Convert duration to time units
+                duration_time = duration_frames * time_resolution
+                
+                # Only add if duration is meaningful
+                if duration_time > 0.05: # Minimum duration threshold
+                    notes.append({
+                        'midi': midi_note,
+                        'start_time': note_start_frame * time_resolution,
+                        'duration': duration_time,
+                        'velocity': np.mean(key_data[note_start_frame:note_end_frame]) # Average velocity over the note
+                    })
+                in_note = False
+        
+        # Handle notes that extend to the very end of the piano roll
+        if in_note:
+            note_end_frame = len(key_data)
+            duration_frames = note_end_frame - note_start_frame
+            duration_time = duration_frames * time_resolution
+            if duration_time > 0.05:
+                notes.append({
+                    'midi': midi_note,
+                    'start_time': note_start_frame * time_resolution,
+                    'duration': duration_time,
+                    'velocity': np.mean(key_data[note_start_frame:note_end_frame])
+                })
+    return notes
+
 @app.route('/predict', methods=['POST'])
 def predict():
     if request.method == 'POST':
@@ -263,84 +490,87 @@ def predict():
                     warning_message = f"Seulement {nb_notes} notes détectées avec un seuil de {threshold}. " \
                                      f"Essayez de réduire le seuil ou d'utiliser un autre fichier audio."
                 
-                # OPTIMISATION DE L'AFFICHAGE: Trouver les segments pertinents
-                if nb_notes > 0:
-                    # Déterminer les limites pertinentes pour le graphique
-                    active_frames = np.where(np.sum(binary_roll, axis=1) > 0)[0]
+                # # OPTIMISATION DE L'AFFICHAGE: Trouver les segments pertinents
+                # if nb_notes > 0:
+                #     # Déterminer les limites pertinentes pour le graphique
+                #     active_frames = np.where(np.sum(binary_roll, axis=1) > 0)[0]
                     
-                    if len(active_frames) > 0:
-                        # Trouver les limites des régions actives
-                        start_frame = max(0, active_frames[0] - 10)  # 10 frames avant la première note
-                        end_frame = min(pianoroll.shape[0], active_frames[-1] + 10)  # 10 frames après la dernière note
+                #     if len(active_frames) > 0:
+                #         # Trouver les limites des régions actives
+                #         start_frame = max(0, active_frames[0] - 10)  # 10 frames avant la première note
+                #         end_frame = min(pianoroll.shape[0], active_frames[-1] + 10)  # 10 frames après la dernière note
                         
-                        # Si la région est trop grande, identifier les segments les plus denses
-                        display_length = end_frame - start_frame
-                        if display_length > max_display_length:
-                            # Diviser en fenêtres et trouver les fenêtres les plus actives
-                            window_size = 50  # taille de la fenêtre d'analyse
-                            activity = []
+                #         # Si la région est trop grande, identifier les segments les plus denses
+                #         display_length = end_frame - start_frame
+                #         if display_length > max_display_length:
+                #             # Diviser en fenêtres et trouver les fenêtres les plus actives
+                #             window_size = 50  # taille de la fenêtre d'analyse
+                #             activity = []
                             
-                            for i in range(0, pianoroll.shape[0] - window_size, window_size // 2):  # Chevauchement de 50%
-                                window_activity = np.sum(binary_roll[i:i+window_size])
-                                activity.append((i, window_activity))
+                #             for i in range(0, pianoroll.shape[0] - window_size, window_size // 2):  # Chevauchement de 50%
+                #                 window_activity = np.sum(binary_roll[i:i+window_size])
+                #                 activity.append((i, window_activity))
                             
-                            # Trier les fenêtres par activité décroissante
-                            activity.sort(key=lambda x: x[1], reverse=True)
+                #             # Trier les fenêtres par activité décroissante
+                #             activity.sort(key=lambda x: x[1], reverse=True)
                             
-                            # Utiliser les N premières fenêtres les plus actives pour rester sous max_display_length
-                            top_windows = []
-                            cumulative_length = 0
-                            for win_start, _ in activity:
-                                if cumulative_length < max_display_length:
-                                    win_end = min(win_start + window_size, pianoroll.shape[0])
-                                    top_windows.append((win_start, win_end))
-                                    cumulative_length += win_end - win_start
-                                else:
-                                    break
+                #             # Utiliser les N premières fenêtres les plus actives pour rester sous max_display_length
+                #             top_windows = []
+                #             cumulative_length = 0
+                #             for win_start, _ in activity:
+                #                 if cumulative_length < max_display_length:
+                #                     win_end = min(win_start + window_size, pianoroll.shape[0])
+                #                     top_windows.append((win_start, win_end))
+                #                     cumulative_length += win_end - win_start
+                #                 else:
+                #                     break
                             
-                            # Fusionner les fenêtres qui se chevauchent
-                            if top_windows:
-                                top_windows.sort()  # Trier par temps croissant
-                                merged_windows = [top_windows[0]]
+                #             # Fusionner les fenêtres qui se chevauchent
+                #             if top_windows:
+                #                 top_windows.sort()  # Trier par temps croissant
+                #                 merged_windows = [top_windows[0]]
                                 
-                                for current_start, current_end in top_windows[1:]:
-                                    prev_start, prev_end = merged_windows[-1]
-                                    if current_start <= prev_end:
-                                        # Les fenêtres se chevauchent
-                                        merged_windows[-1] = (prev_start, max(prev_end, current_end))
-                                    else:
-                                        # Nouvelle fenêtre
-                                        merged_windows.append((current_start, current_end))
+                #                 for current_start, current_end in top_windows[1:]:
+                #                     prev_start, prev_end = merged_windows[-1]
+                #                     if current_start <= prev_end:
+                #                         # Les fenêtres se chevauchent
+                #                         merged_windows[-1] = (prev_start, max(prev_end, current_end))
+                #                     else:
+                #                         # Nouvelle fenêtre
+                #                         merged_windows.append((current_start, current_end))
                                 
-                                # Utiliser ces segments pour l'affichage
-                                display_segments = merged_windows
-                            else:
-                                # Fallback: afficher le début jusqu'à max_display_length
-                                display_segments = [(0, min(max_display_length, pianoroll.shape[0]))]
-                        else:
-                            # La région active est assez petite pour être entièrement affichée
-                            display_segments = [(start_frame, end_frame)]
-                    else:
-                        # Aucune note active, afficher juste le début
-                        display_segments = [(0, min(max_display_length, pianoroll.shape[0]))]
-                else:
-                    # Aucune note détectée, montrer juste le début du pianoroll
-                    display_segments = [(0, min(max_display_length, pianoroll.shape[0]))]
+                #                 # Utiliser ces segments pour l'affichage
+                #                 display_segments = merged_windows
+                #             else:
+                #                 # Fallback: afficher le début jusqu'à max_display_length
+                #                 display_segments = [(0, min(max_display_length, pianoroll.shape[0]))]
+                #         else:
+                #             # La région active est assez petite pour être entièrement affichée
+                #             display_segments = [(start_frame, end_frame)]
+                #     else:
+                #         # Aucune note active, afficher juste le début
+                #         display_segments = [(0, min(max_display_length, pianoroll.shape[0]))]
+                # else:
+                #     # Aucune note détectée, montrer juste le début du pianoroll
+                #     display_segments = [(0, min(max_display_length, pianoroll.shape[0]))]
                 
-                # Créer une figure pour chaque segment et les concaténer
-                plt.figure(figsize=(12, 8))
+                # # Créer une figure pour chaque segment et les concaténer
+                # plt.figure(figsize=(12, 8))
                 
-                # S'il y a plusieurs segments, utiliser une mise en page subplots
-                n_segments = len(display_segments)
-                total_display_frames = sum(end - start for start, end in display_segments)
+                # # S'il y a plusieurs segments, utiliser une mise en page subplots
+                # n_segments = len(display_segments)
+                # total_display_frames = sum(end - start for start, end in display_segments)
                 
-                # Si on a trop de segments, on en limite le nombre
-                if n_segments > 3:  # Limiter à 3 segments au maximum
-                    display_segments = display_segments[:3]
-                    n_segments = 3
+                # # Si on a trop de segments, on en limite le nombre
+                # if n_segments > 3:  # Limiter à 3 segments au maximum
+                #     display_segments = display_segments[:3]
+                #     n_segments = 3
                 
-                # Créer un affichage pour les probabilités brutes
-                plt.subplot(2, 1, 1)
+                # # Créer un affichage pour les probabilités brutes
+                # plt.subplot(2, 1, 1)
+
+                display_segments = [(0, pianoroll.shape[0])]
+                n_segments = 1
                 
                 if n_segments == 1:
                     # Un seul segment: afficher normalement
@@ -366,7 +596,7 @@ def predict():
                 
                 plt.colorbar(label='Probabilités de notes (valeurs brutes)')
                 plt.xlabel('Temps (frames)')
-                plt.ylabel('Notes (MIDI)')
+                plt.ylabel('Notes (MIDI)')  
                 plt.grid(True, linestyle='--', alpha=0.7)
                 
                 # Créer un affichage pour le pianoroll binaire
@@ -406,7 +636,7 @@ def predict():
                 buf.seek(0)
                 img_base64 = base64.b64encode(buf.read()).decode('utf-8')
                 
-                # Convertir le pianoroll en fichier MIDI
+                # Convertir le pianoroll en fichier MIDI puis XMl
                 try:
                     midi_bytes = pianoroll_to_midi(pianoroll, threshold, SR, HOP_LENGTH)
                     midi_base64 = base64.b64encode(midi_bytes).decode('utf-8')
@@ -414,9 +644,36 @@ def predict():
                     # Générer un nom de fichier avec timestamp
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     midi_filename = f"transcription_{timestamp}.mid"
+
+                    # --- IMPORTANT: Save the MIDI bytes to a file ---
+                    with open(midi_filename, 'wb') as f:
+                        f.write(midi_bytes)
+                    print(f"MIDI file saved as: {midi_filename}")
                     
                     midi_success = True
                     midi_message = "Fichier MIDI généré avec succès"
+
+                    # midi_to_musicxml
+                    converter = MidiToSheetConverter(midi_filename)
+
+                    if converter.load_midi():
+                        # Analyze the score
+                        analysis = converter.analyze_score()
+
+                        # Simplify if needed
+                        converter.simplify_score()
+
+                        # Generate outputs
+                        musicxml_path = converter.generate_musicxml()
+                        png_path = converter.generate_png()
+
+                        # Get JSON representation for web use
+                        json_data = converter.get_json_representation()
+
+                        print("Conversion complete!")
+                        print(f"MusicXML: {musicxml_path}")
+                        print(f"PNG: {png_path}")
+                        print(f"JSON data available for web display")
                 except Exception as midi_error:
                     print(f"Erreur lors de la génération du MIDI: {str(midi_error)}")
                     import traceback
@@ -442,13 +699,17 @@ def predict():
                     'midi_base64': midi_base64,
                     'midi_filename': midi_filename,
                     'midi_success': midi_success,
-                    'midi_message': midi_message
+                    'midi_message': midi_message,
+                    'abc_notation': abc_notation,
+                    'xml_file' : 
                 }
                 
                 if warning_message:
                     result['warning'] = warning_message
                 
                 status = 'warning' if warning_message else 'success'
+        
+
                 return jsonify({'status': status, 'music_data': result})
                 
         except Exception as e:

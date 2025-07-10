@@ -11,8 +11,11 @@ export default function Page() {
     const [image, setImage] = useState<string | null>("")
     const [midiFile, setMidiFile] = useState<string | null>("")
     const [midiFile64, setMidiFile64] = useState<any | null>("")
+    const [xmlFile, setXmlFile] = useState<string | null>("")
+    const [xmlFile64, setXmlFile64] = useState<any | null>("")
     const [audioUrl, setAudioUrl] = useState<string | null>("")
     const [spectrogramURL, setSpectrogramUrl] = useState<string | null>("")
+    const [abcNotation, setABCNotation] = useState<string | null>("")
     const searchParams = useSearchParams()
     const textOne = searchParams.get('textOne')
     const textTwo = searchParams.get('textTwo')
@@ -24,10 +27,10 @@ export default function Page() {
                 <Card setIsConverted={setIsConverted} file ={file} 
                 setFile={setFile} textOne={textOne} setImage={setImage}
                  setMidiFile={setMidiFile} setMidiFile64={setMidiFile64}
-                 setAudioUrl={setAudioUrl} setSpectrogramUrl={setSpectrogramUrl}
+                 setAudioUrl={setAudioUrl} setSpectrogramUrl={setSpectrogramUrl} setXmlFile64={setXmlFile64} setXmlFile={setXmlFile}
                  />
                 {isConverted && <Result file={file} textOne={textOne} image={image} midiFile={midiFile} midiFile64={midiFile64}
-                    audioUrl={audioUrl} spectrogramURL={spectrogramURL}
+                    audioUrl={audioUrl} spectrogramURL={spectrogramURL} abcNotation={abcNotation} xmlFile={xmlFile} xmlFile64={xmlFile64}
                 />}
             </div>            
         </div>
