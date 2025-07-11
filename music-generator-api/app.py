@@ -116,8 +116,10 @@ class MidiToSheetConverter:
             return None
     
         musicxml_path = os.path.splitext(self.midi_file_path)[0] + '.musicxml'
-        generated_xml_path = self.generate_musicxml(musicxml_path)
-    
+        # generated_xml_path = self.generate_musicxml(musicxml_path)
+        if not musicxml_path or not os.path.exists(musicxml_path):
+            print("Failed to generate MusicXML file required for PNG conversion.")
+            return None
         if output_path is None:
             output_path = os.path.splitext(self.midi_file_path)[0] + '.png'
     
@@ -125,7 +127,7 @@ class MidiToSheetConverter:
             command = [
                     str(self.us['musescoreDirectPNGPath']),
                     '-o', str(output_path),
-                    str(generated_xml_path)
+                    str(musicxml_path)
                 ]
 
             print(f"Executing command: {' '.join(command)}")
@@ -149,6 +151,24 @@ class MidiToSheetConverter:
                 return output_path
             else:
                 print("MuseScore command completed without error, but PNG file was not found at expected path.")
+                print(f"Expected path: {output_path}")
+                # Essayer de chercher des fichiers PNG générés dans le répertoire courant
+                base_name = os.path.splitext(os.path.basename(self.midi_file_path))[0]
+                possible_paths = [
+                    f"{base_name}-1.png",  # MuseScore ajoute souvent -1 pour la première page
+                    f"{base_name}.png",
+                    os.path.join(os.path.dirname(output_path), f"{base_name}-1.png")
+                ]
+
+                for possible_path in possible_paths:
+                    if os.path.exists(possible_path):
+                        print(f"Found PNG at alternative path: {possible_path}")
+                        # Optionnel: renommer vers le chemin souhaité
+                        if possible_path != output_path:
+                            os.rename(possible_path, output_path)
+                            print(f"Renamed to: {output_path}")
+                        return output_path
+
                 return None
 
         except Exception as e: # Catch any other unexpected errors
@@ -719,6 +739,12 @@ def predict():
 
                         png_path = converter.generate_png()
 
+                        png_base64 = None
+                        if png_path and os.path.exists(png_path):
+                            with open(png_path, 'rb') as f:
+                                png_content = f.read()
+                                png_base64 = base64.b64encode(png_content).decode('utf-8')
+
 
 
                         # Get JSON representation for web use
@@ -758,7 +784,7 @@ def predict():
                     'xml_base64': musicxml_base64,  # Base64 encoded MusicXML
                     'xml_filename': musicxml_path.split('/')[-1] if musicxml_path else None,  # Just the filename
                     'png_path': png_path,  # Path to the generated PNG
-
+                    'png_base64': png_base64,  # Base64 encoded PNG
                     
                 }
                 

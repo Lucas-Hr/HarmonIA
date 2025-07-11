@@ -59,14 +59,14 @@ export default function Result({file, textOne, image, midiFile, midiFile64, audi
             
 
             // Télécharger les deux fichiers
-            downloadBoth(midiUrl, 'midi version.mid', image, 'piano roll.png');
+            downloadBoth(midiUrl, `${file.name.replace(".wav","_midi.midi")}`, image, `${file.name.replace(".wav","_partition.png")}`);
             
             // Nettoyer l'URL du MIDI
             setTimeout(() => URL.revokeObjectURL(midiUrl), 100);
           }
         };
  
-     
+
 
     return (
            <motion.div 
@@ -79,9 +79,9 @@ export default function Result({file, textOne, image, midiFile, midiFile64, audi
            >
                {image && midiFile &&(
                     <>
-                         <Image src={image} width={200} height={200} alt="piano rolls"/>
-                         <p className="mt-2">{file.name}</p>
-                         {/* <p className="mt-2">{abcNotation}</p> */}
+
+                         <Image src={image} width={200} height={200} alt="piano rolls" className="bg-white"/>
+                         <p className="mt-2">{file.name.replace('.wav', '_partition.png')}</p>
                          <button className="bg-white text-black px-5 py-2 rounded-lg mt-4 cursor-pointer w-full flex justify-center hover:bg-[#DCDCDC]" onClick={downloadMidiAndImage}><Image src="/download.svg" width={25} height={25} alt="download"/>Telecharger</button>
                     </>
                )}
@@ -91,9 +91,10 @@ export default function Result({file, textOne, image, midiFile, midiFile64, audi
                          <audio controls className="mt-4">
                               <source src={audioUrl} />
                          </audio>
+                         <p className="mt-2 txt-center">{file.name.replace('.midi', '_audio.mp3')}</p>
                          <Image src={spectrogramURL} width={200} height={200} alt="spectrogram" className="mt-2"/>
-                         <p className="mt-2 txt-center">{file.name}</p>
-                         <button className="bg-white text-black px-5 py-2 rounded-lg mt-4 cursor-pointer w-full flex justify-center hover:bg-[#DCDCDC]" onClick={() => downloadBoth(audioUrl, "Audio.wav", spectrogramURL, "spectrogram.jpg")}><Image src="/download.svg" width={25} height={25} alt="download"/>Telecharger</button>
+                         <p className="mt-2 txt-center">{file.name.replace('.midi', '_spectrogram.png')}</p>
+                         <button className="bg-white text-black px-5 py-2 rounded-lg mt-4 cursor-pointer w-full flex justify-center hover:bg-[#DCDCDC]" onClick={() => downloadBoth(audioUrl, `${file.name.replace('.midi', '_audio.wav')}`, spectrogramURL, `${file.name.replace('.midi', '_spectrogram.png')}`)}><Image src="/download.svg" width={25} height={25} alt="download"/>Telecharger</button>
                     </>   
                )}
                 

@@ -73,7 +73,7 @@ export default function Card({setIsConverted , file, setFile, textOne, setImage,
             const data = await res.json();
             if (data.status === 'success') {
                 console.log("Music_data" , data);
-                const base64 = data.music_data.image_base64;
+                const base64 = data.music_data.png_base64;
                 const abc_notation = data.music_data.abc_notation;
                 // setABCNotation(abc_notation)
                 setImage(`data:image/png;base64,${base64}`);
@@ -88,9 +88,6 @@ export default function Card({setIsConverted , file, setFile, textOne, setImage,
                 const musicxmlString = data.music_data.xml_string;
                 setXmlFile(xmlFile);
                 setXmlFile64(xmlFile64);
-                localStorage.setItem('currentMusicXML', musicxmlString);
-                localStorage.setItem('currentMusicXMLFilename', xmlFile || 'transcription.xml');
-                // router.push('/testSheet');
 
                 
             }
