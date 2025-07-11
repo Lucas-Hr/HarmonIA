@@ -1,9 +1,12 @@
+'use client'
+
 import { File } from "buffer";
 import Image from "next/image";
 import { useCallback } from "react";
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { error } from "console";
+import { useRouter } from "next/navigation";
 
 type CardProps = {
     setIsConverted: (value: boolean) => void,
@@ -15,14 +18,13 @@ type CardProps = {
     setMidiFile64 : (value : any) => void,
     setAudioUrl : (value : string) => void,
     setSpectrogramUrl : (value : string) => void
-    // setABCNotation : (value : string) => void
     setXmlFile64 : (value : any) => void,
     setXmlFile : (value : string) => void,
     
 };
 
 export default function Card({setIsConverted , file, setFile, textOne, setImage, setMidiFile, setMidiFile64, setAudioUrl, setSpectrogramUrl, setXmlFile64, setXmlFile}: CardProps) {
-
+    const router = useRouter();
     const handleDrop = useCallback((event : any) => {
         event.preventDefault();
         const droppedFile = event.dataTransfer.files[0];
@@ -83,9 +85,13 @@ export default function Card({setIsConverted , file, setFile, textOne, setImage,
                 setMidiFile64(midiFile64)
                 const xmlFile = data.music_data.xml_filename;
                 const xmlFile64 = data.music_data.xml_base64;
+                const musicxmlString = data.music_data.xml_string;
                 setXmlFile(xmlFile);
                 setXmlFile64(xmlFile64);
-                
+                localStorage.setItem('currentMusicXML', musicxmlString);
+                localStorage.setItem('currentMusicXMLFilename', xmlFile || 'transcription.xml');
+                // router.push('/testSheet');
+
                 
             }
             else {
@@ -105,7 +111,6 @@ export default function Card({setIsConverted , file, setFile, textOne, setImage,
                 console.log("data : " , data);
                 const audio= data.audio;
                 const spectrogram = data.spectrogram;
-                const abcNotation = data.abc_notation;
                 setAudioUrl(audio);
                 setSpectrogramUrl(spectrogram);
                 setIsConverted(true);
