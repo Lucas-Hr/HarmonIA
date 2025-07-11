@@ -36,7 +36,6 @@ export default function Result({file, textOne, image, midiFile, midiFile64, audi
       
           downloadFile(file1, name1);
           downloadFile(file2, name2);
-          // downloadFile(file3, name3);
       };
 
       const base64ToUrl = (base64Data : any, mimeType : any) => {
@@ -65,8 +64,6 @@ export default function Result({file, textOne, image, midiFile, midiFile64, audi
             setTimeout(() => URL.revokeObjectURL(midiUrl), 100);
           }
         };
- 
-
 
     return (
            <motion.div 

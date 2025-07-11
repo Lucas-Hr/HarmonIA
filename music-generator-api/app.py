@@ -244,6 +244,7 @@ class MidiToSheetConverter:
 
         return score_data
 
+
 # Définition de l'architecture du modèle PerformanceNet
 class ConvBlock(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, padding=1):
@@ -632,7 +633,7 @@ def predict():
 
                 display_segments = [(0, pianoroll.shape[0])]
                 n_segments = 1
-                
+              
                 if n_segments == 1:
                     # Un seul segment: afficher normalement
                     start, end = display_segments[0]
@@ -657,6 +658,7 @@ def predict():
                 
                 plt.colorbar(label='Probabilités de notes (valeurs brutes)')
                 plt.xlabel('Temps (frames)')
+
                 plt.ylabel('Notes (MIDI)')  
                 plt.grid(True, linestyle='--', alpha=0.7)
                 
@@ -696,8 +698,6 @@ def predict():
                 plt.close()
                 buf.seek(0)
                 img_base64 = base64.b64encode(buf.read()).decode('utf-8')
-                
-                # Convertir le pianoroll en fichier MIDI puis XMl
                 try:
                     midi_bytes = pianoroll_to_midi(pianoroll, threshold, SR, HOP_LENGTH)
                     midi_base64 = base64.b64encode(midi_bytes).decode('utf-8')
@@ -785,14 +785,12 @@ def predict():
                     'xml_filename': musicxml_path.split('/')[-1] if musicxml_path else None,  # Just the filename
                     'png_path': png_path,  # Path to the generated PNG
                     'png_base64': png_base64,  # Base64 encoded PNG
-                    
                 }
                 
                 if warning_message:
                     result['warning'] = warning_message
                 
                 status = 'warning' if warning_message else 'success'
-        
 
                 return jsonify({'status': status, 'music_data': result})
                 
@@ -802,8 +800,7 @@ def predict():
             traceback.print_exc()
             return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# Generation partition to audio
-        
+# Generation partition to audio      
 # Paramètres
 DURATION = 30
 SR = 22050
@@ -942,7 +939,7 @@ def spectrogram_to_audio(spectrogram, spec_min, spec_max):
     except Exception as e:
         raise RuntimeError(f"Erreur dans griffinlim : {e}")
     audio = audio / max(abs(audio)) if np.max(np.abs(audio)) > 0 else audio
-    print(f"Audio shape: {audio.shape}")  # Débogage
+    print(f"Audio shape: {audio.shape}")  # Débogag
     return audio
 
 @app.route("/midi-to-audio", methods=["POST"])
@@ -998,6 +995,7 @@ def midi_to_audio_endpoint():
     except Exception as e:
         app.logger.error(f"Erreur inattendue: {str(e)}")
         return jsonify({"error": f"Erreur interne: {str(e)}"}), 500
+
 
 @app.route('/health', methods=['GET'])
 def health_check():

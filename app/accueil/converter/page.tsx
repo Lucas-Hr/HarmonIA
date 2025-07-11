@@ -32,6 +32,7 @@ export default function Page() {
                 {isConverted && <Result file={file} textOne={textOne} image={image} midiFile={midiFile} midiFile64={midiFile64}
                     audioUrl={audioUrl} spectrogramURL={spectrogramURL} abcNotation={abcNotation} xmlFile={xmlFile} xmlFile64={xmlFile64}
                 />}
+
             </div>            
         </div>
     )
