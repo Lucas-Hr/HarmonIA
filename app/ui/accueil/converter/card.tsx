@@ -1,32 +1,40 @@
+'use client'
+
 import { File } from "buffer";
 import Image from "next/image";
 import { useCallback } from "react";
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { error } from "console";
+import { useRouter } from "next/navigation";
 
 type CardProps = {
     setIsConverted: (value: boolean) => void,
     file : File | null,
     setFile : (value : File | null) => void,
     textOne : string | null,
-    setImage : (value : string) => void
-    setMidiFile : (value : string) => void
-    setMidiFile64 : (value : any) => void
+    setImage : (value : string) => void,
+    setMidiFile : (value : string) => void,
+    setMidiFile64 : (value : any) => void,
+    setAudioUrl : (value : string) => void,
+    setSpectrogramUrl : (value : string) => void
+    setXmlFile64 : (value : any) => void,
+    setXmlFile : (value : string) => void,
+    
 };
 
-export default function Card({setIsConverted , file, setFile, textOne, setImage, setMidiFile, setMidiFile64}: CardProps) {
-
+export default function Card({setIsConverted , file, setFile, textOne, setImage, setMidiFile, setMidiFile64, setAudioUrl, setSpectrogramUrl, setXmlFile64, setXmlFile}: CardProps) {
+    const router = useRouter();
     const handleDrop = useCallback((event : any) => {
         event.preventDefault();
         const droppedFile = event.dataTransfer.files[0];
         if (droppedFile && textOne === "Partition") {
-            if (droppedFile.type.startsWith('application/pdf')){
+            if (droppedFile.type.startsWith('')){
                 setFile(droppedFile);
             } else alert("File type unsupported")
             
         } else if (droppedFile && textOne === "Musique") {
-            if (droppedFile.type.startsWith('audio/mpeg')){
+            if (droppedFile.type.startsWith('audio/wav')){
                 setFile(droppedFile);
             } else alert("File type unsupported")
             
@@ -36,7 +44,7 @@ export default function Card({setIsConverted , file, setFile, textOne, setImage,
     const handleFileChange = (event : any) => {
         const selectedFile = event.target.files[0];
         if (selectedFile && textOne === "Partition") {
-            if (selectedFile.type.startsWith('application/pdf')){
+            if (selectedFile.type.startsWith('')){
                 setFile(selectedFile);
             } else alert("File type unsupported")
             
@@ -54,12 +62,8 @@ export default function Card({setIsConverted , file, setFile, textOne, setImage,
     const converting = async (f : File | null) => {
         if(f === null){
             alert("Please Insert a file")
-        } else {
-       setIsVisible(true);
-    //    setTimeout(() => {
-    //         setIsVisible(false)
-    //         setIsConverted(true)
-    //    },5000)   
+        } else if (textOne === "Musique"){
+            setIsVisible(true);
             const formData = new FormData();
             formData.append('file', f as Blob);
             const res = await fetch("http://localhost:5000/predict", {
@@ -69,7 +73,8 @@ export default function Card({setIsConverted , file, setFile, textOne, setImage,
             const data = await res.json();
             if (data.status === 'success') {
                 console.log("Music_data" , data);
-                const base64 = data.music_data.image_base64;
+                const base64 = data.music_data.png_base64;
+                const abc_notation = data.music_data.abc_notation;
                 setImage(`data:image/png;base64,${base64}`);
                 setIsConverted(true);
                 setIsVisible(false);
@@ -77,12 +82,38 @@ export default function Card({setIsConverted , file, setFile, textOne, setImage,
                 const midiFile64 = data.music_data.midi_base64;
                 setMidiFile(midiFile)
                 setMidiFile64(midiFile64)
+                const xmlFile = data.music_data.xml_filename;
+                const xmlFile64 = data.music_data.xml_base64;
+                const musicxmlString = data.music_data.xml_string;
+                setXmlFile(xmlFile);
+                setXmlFile64(xmlFile64);
                 
             }
             else {
                 console.error('error' , data.message)
             }
 
+        } else if (textOne === "Partition") {
+            setIsVisible(true)
+            const formData = new FormData();
+            formData.append('file', f as Blob);
+            const res = await fetch("http://localhost:5000/midi-to-audio", {
+                method : "POST",
+                body : formData
+            });
+            const data = await res.json();
+            if (data.status === 'success') {
+                console.log("data : " , data);
+                const audio= data.audio;
+                const spectrogram = data.spectrogram;
+                setAudioUrl(audio);
+                setSpectrogramUrl(spectrogram);
+                setIsConverted(true);
+                setIsVisible(false);
+            }
+            else {
+                console.error('error' , data.error)
+            }
         }
     }
 

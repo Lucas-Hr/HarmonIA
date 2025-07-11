@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MIDI to Sheet Music Converter</title>
+    <script src="https://cdn.jsdelivr.net/npm/verovio@4.3.1/dist/verovio-toolkit-wasm.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <style>
+        body {
+            /* font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; */
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: black;
+            min-height: 100vh;
+        }
+        
+        .container {
+            background: #0D0D0D;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            background: white;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .upload-section {
+            text-align: center;
+            margin-bottom: 30px;
+            border-radius: 10px;
+            background: #0D0D0D;
+            transition: all 0.3s ease;
+        }
+        
+        .file-input-wrapper {
+            position: relative;
+            overflow: hidden;
+            display: inline-block;
+        }
+        
+        .file-input-wrapper input[type=file] {
+            position: absolute;
+            left: -9999px;
+        }
+        
+        .file-input-label {
+            padding: 15px 30px;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            display: inline-block;
+        }
+        
+        .file-input-label:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .controls {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+        
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+        }
+        
+        .btn-primary {
+            background: #171717;
+            color: white;
+            border: 2px solid #DCDCDC;
+        }
+        
+        .btn-secondary {
+            background: #171717;
+            color: white;
+            border: 2px solid #DCDCDC;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+        
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .options {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .option-group {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        .option-group label {
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .option-group select {
+            padding: 8px 15px;
+            border: 2px solid #DCDCDC;
+            border-radius: 20px;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.3s ease;
+        }
+        
+        .option-group select:focus {
+            border-color: #171717;
+        }
+        
+        .sheet-music {
+            text-align: center;
+            margin-top: 30px;
+            padding: 20px;
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            overflow-x: auto;
+        }
+        
+        .sheet-music svg {
+            max-width: 100%;
+            height: auto;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #667eea;
+            font-size: 18px;
+        }
+        
+        .loading:after {
+            content: "...";
+            animation: dots 1.5s steps(4, end) infinite;
+        }
+        
+        @keyframes dots {
+            0%, 20% { content: "."; }
+            40% { content: ".."; }
+            60% { content: "..."; }
+            80%, 100% { content: ""; }
+        }
+        
+        .error {
+            background: #fee;
+            color: #c33;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+            border: 1px solid #fcc;
+        }
+        
+        .success {
+            background: #efe;
+            color: #363;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+            border: 1px solid #cfc;
+        }
+        
+        .info {
+            background: #e3f2fd;
+            color: #1976d2;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+            border: 1px solid #bbdefb;
+        }
+        
+        @media (max-width: 768px) {
+            .controls, .options {
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            .container {
+                padding: 20px;
+            }
+            
+            h1 {
+                font-size: 2em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎵 MIDI to Sheet Music Converter</h1>
+        
+        <div class="upload-section">
+            <div class="file-input-wrapper">
+                <input type="file" id="midiFile" accept=".mid,.midi,.xml,.musicxml,.mxl" />
+                <label for="midiFile" class="file-input-label">
+                    📁 Import MusicXML File
+                </label>
+            </div>
+            <p style="margin-top: 15px; color: #DCDCDC;">
+                Select MusicXML (.xml, .musicxml, .mxl) file to convert to sheet music
+            </p>
+        </div>
+        
+        <div class="options">
+            <div class="option-group">
+                <label for="scale" style="margin-top: 15px; color: #DCDCDC;">Scale:</label>
+                <select id="scale">
+                    <option value="50">Small (50%)</option>
+                    <option value="75">Medium (75%)</option>
+                    <option value="100" selected>Normal (100%)</option>
+                    <option value="125">Large (125%)</option>
+                    <option value="150">Extra Large (150%)</option>
+                </select>
+            </div>
+            
+            <div class="option-group">
+                <label for="pageFormat" style="margin-top: 15px; color: #DCDCDC;">Page Format:</label>
+                <select id="pageFormat">
+                    <option value="A4" selected>A4</option>
+                    <option value="letter">Letter</option>
+                    <option value="legal">Legal</option>
+                </select>
+            </div>
+            
+            <div class="option-group">
+                <label for="orientation" style="margin-top: 15px; color: #DCDCDC;">Orientation:</label>
+                <select id="orientation">
+                    <option value="portrait" selected>Portrait</option>
+                    <option value="landscape">Landscape</option>
+                </select>
+            </div>
+        </div>
+        
+        <div class="controls">
+            <button class="btn btn-primary" id="convertBtn" disabled>
+                🎼 Convert to Sheet Music
+            </button>
+            <button class="btn btn-secondary" id="downloadPngBtn" disabled>
+                📷 Download PNG
+            </button>
+            <button class="btn btn-secondary" id="downloadPdfBtn" disabled>
+                📄 Download PDF
+            </button>
+        </div>
+        
+        <div id="status"></div>
+        <div id="sheetMusic" class="sheet-music"></div>
+    </div>
+
+    <script>
+        let verovioToolkit;
+        let currentSvg = '';
+        let currentFileName = '';
+        let isInitialized = false;
+        let musicXMLData = null;
+
+        // Get MusicXML data from various sources
+        function getMusicXMLData() {
+            // Try localStorage first
+            const storedXML = localStorage.getItem('currentMusicXML');
+            if (storedXML) {
+                currentFileName = localStorage.getItem('currentMusicXMLFilename') || 'transcription';
+                return storedXML;
+            }
+            
+            // Try URL parameters
+            const urlParams = new URLSearchParams(window.location.search);
+            const xmlParam = urlParams.get('musicxml');
+            if (xmlParam) {
+                try {
+                    return decodeURIComponent(xmlParam);
+                } catch (e) {
+                    console.error('Error decoding MusicXML from URL:', e);
+                }
+            }
+            
+            // Try sessionStorage
+            const sessionXML = sessionStorage.getItem('currentMusicXML');
+            if (sessionXML) {
+                currentFileName = sessionStorage.getItem('currentMusicXMLFilename') || 'transcription';
+                return sessionXML;
+            }
+            
+            return null;
+        }
+        
+        // Initialize Verovio
+        async function initVerovio() {
+            try {
+                showStatus('Loading Verovio toolkit...', 'info');
+                
+                // Wait for Verovio to be available
+                if (typeof verovio === 'undefined') {
+                    // Try to wait a bit longer
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    if (typeof verovio === 'undefined') {
+                        throw new Error('Verovio library not loaded');
+                    }
+                }
+                
+                // Initialize the toolkit
+                const verovioModule = await verovio.module;
+                verovioToolkit = new verovio.toolkit();
+                
+                // Test if toolkit is working
+                const version = verovioToolkit.getVersion();
+                console.log('Verovio version:', version);
+                
+                isInitialized = true;
+                showStatus(`Verovio toolkit v${version} loaded successfully!`, 'success');
+                
+                // Enable convert button if file is selected
+                const fileInput = document.getElementById('midiFile');
+                if (fileInput.files && fileInput.files.length > 0) {
+                    document.getElementById('convertBtn').disabled = false;
+                }
+                
+            } catch (error) {
+                console.error('Failed to initialize Verovio:', error);
+                showStatus(`Failed to initialize Verovio toolkit: ${error.message}`, 'error');
+                isInitialized = false;
+            }
+        }
+        
+        // Show status messages
+        function showStatus(message, type = 'info') {
+            const statusDiv = document.getElementById('status');
+            statusDiv.innerHTML = `<div class="${type}">${message}</div>`;
+            if (type === 'success') {
+                setTimeout(() => statusDiv.innerHTML = '', 3000);
+            }
+        }
+        
+        // Detect file type
+        function getFileType(filename) {
+            const ext = filename.toLowerCase().split('.').pop();
+            if (ext === 'mid' || ext === 'midi') return 'midi';
+            if (ext === 'xml' || ext === 'musicxml' || ext === 'mxl') return 'musicxml';
+            return 'unknown';
+        }
+        
+        // Convert ArrayBuffer to base64
+        function arrayBufferToBase64(buffer) {
+            let binary = '';
+            const bytes = new Uint8Array(buffer);
+            const len = bytes.byteLength;
+            for (let i = 0; i < len; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return btoa(binary);
+        }
+        
+        // File input handler
+        document.getElementById('midiFile').addEventListener('change', function(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const fileType = getFileType(file.name);
+                if (fileType === 'unknown') {
+                    showStatus('Please select a MIDI (.mid, .midi) or MusicXML (.xml, .musicxml, .mxl) file', 'error');
+                    return;
+                }
+                
+                currentFileName = file.name.replace(/\.[^/.]+$/, "");
+                document.getElementById('convertBtn').disabled = !isInitialized;
+                
+                if (isInitialized) {
+                    showStatus(`File "${file.name}" selected. Ready to convert!`, 'success');
+                } else {
+                    showStatus(`File "${file.name}" selected. Waiting for Verovio to initialize...`, 'info');
+                }
+            }
+        });
+        
+        // Convert button handler
+        document.getElementById('convertBtn').addEventListener('click', async function() {
+            const fileInput = document.getElementById('midiFile');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                showStatus('Please select a file first', 'error');
+                return;
+            }
+            
+            if (!isInitialized) {
+                showStatus('Verovio toolkit not initialized', 'error');
+                return;
+            }
+            
+            showStatus('Converting to sheet music...', 'loading');
+            
+            try {
+                const fileType = getFileType(file.name);
+                
+                // Get options
+                const scale = document.getElementById('scale').value;
+                const pageFormat = document.getElementById('pageFormat').value;
+                const orientation = document.getElementById('orientation').value;
+                
+                // Set Verovio options
+                const options = {
+                    scale: parseInt(scale),
+                    pageWidth: orientation === 'landscape' ? 2100 : 1600,
+                    pageHeight: orientation === 'landscape' ? 1600 : 2100,
+                    adjustPageHeight: true,
+                    breaks: 'auto',
+                    font: 'Leipzig',
+                    header: 'none',
+                    footer: 'none'
+                };
+                
+                verovioToolkit.setOptions(options);
+                
+                // Load the data based on file type
+                let success = false;
+                if (fileType === 'midi') {
+                    // For MIDI files, read as ArrayBuffer and convert to base64
+                    const arrayBuffer = await file.arrayBuffer();
+                    const base64Data = arrayBufferToBase64(arrayBuffer);
+                    success = verovioToolkit.loadData(base64Data);
+                } else {
+                    // For MusicXML files, load as text
+                    const fileContent = await file.text();
+                    success = verovioToolkit.loadData(fileContent);
+                }
+                
+                if (!success) {
+                    throw new Error('Failed to load music data. Please check if the file is valid.');
+                }
+                
+                // Get number of pages
+                const pageCount = verovioToolkit.getPageCount();
+                console.log('Number of pages:', pageCount);
+                
+                if (pageCount === 0) {
+                    throw new Error('No pages generated. The file might be empty or invalid.');
+                }
+                
+                // Render all pages
+                let allSvg = '';
+                for (let i = 1; i <= pageCount; i++) {
+                    const pageSvg = verovioToolkit.renderToSVG(i);
+                    if (pageSvg) {
+                        allSvg += pageSvg;
+                    }
+                }
+                
+                if (!allSvg) {
+                    throw new Error('Failed to render SVG');
+                }
+                
+                currentSvg = allSvg;
+                
+                // Display the sheet music
+                document.getElementById('sheetMusic').innerHTML = currentSvg;
+                
+                // Enable download buttons
+                document.getElementById('downloadPngBtn').disabled = false;
+                document.getElementById('downloadPdfBtn').disabled = false;
+                
+                showStatus(`Sheet music generated successfully! (${pageCount} page${pageCount > 1 ? 's' : ''})`, 'success');
+                
+            } catch (error) {
+                console.error('Conversion error:', error);
+                showStatus(`Error converting file: ${error.message}`, 'error');
+            }
+        });
+        
+        // Convert SVG to Canvas
+        function svgToCanvas(svgElement) {
+            return new Promise((resolve, reject) => {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                
+                // Get SVG dimensions
+                const viewBox = svgElement.getAttribute('viewBox');
+                let width = 800, height = 600;
+                
+                if (viewBox) {
+                    const values = viewBox.split(' ');
+                    width = parseInt(values[2]);
+                    height = parseInt(values[3]);
+                } else {
+                    width = parseInt(svgElement.getAttribute('width')) || 800;
+                    height = parseInt(svgElement.getAttribute('height')) || 600;
+                }
+                
+                canvas.width = width;
+                canvas.height = height;
+                
+                // Create image from SVG
+                const img = new Image();
+                img.onload = function() {
+                    ctx.fillStyle = 'white';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(img, 0, 0);
+                    resolve(canvas);
+                };
+                
+                img.onerror = function() {
+                    reject(new Error('Failed to load SVG image'));
+                };
+                
+                // Convert SVG to data URL
+                const svgData = new XMLSerializer().serializeToString(svgElement);
+                const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+                const url = URL.createObjectURL(svgBlob);
+                img.src = url;
+            });
+        }
+        
+        // Download PNG
+        document.getElementById('downloadPngBtn').addEventListener('click', async function() {
+            if (!currentSvg) {
+                showStatus('No sheet music to download', 'error');
+                return;
+            }
+            
+            try {
+                showStatus('Generating PNG...', 'loading');
+                
+                const svgElements = document.querySelectorAll('#sheetMusic svg');
+                if (svgElements.length === 0) {
+                    throw new Error('No SVG elements found');
+                }
+                
+                // For now, just export the first page
+                const canvas = await svgToCanvas(svgElements[0]);
+                
+                canvas.toBlob(function(blob) {
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${currentFileName}_sheet_music.png`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    showStatus('PNG downloaded successfully!', 'success');
+                }, 'image/png');
+                
+            } catch (error) {
+                console.error('PNG download error:', error);
+                showStatus(`Error downloading PNG: ${error.message}`, 'error');
+            }
+        });
+        
+        // Download PDF
+        document.getElementById('downloadPdfBtn').addEventListener('click', async function() {
+            if (!currentSvg) {
+                showStatus('No sheet music to download', 'error');
+                return;
+            }
+            
+            try {
+                showStatus('Generating PDF...', 'loading');
+                
+                const svgElements = document.querySelectorAll('#sheetMusic svg');
+                if (svgElements.length === 0) {
+                    throw new Error('No SVG elements found');
+                }
+                
+                const { jsPDF } = window.jspdf;
+                const orientation = document.getElementById('orientation').value;
+                const pageFormat = document.getElementById('pageFormat').value;
+                
+                const pdf = new jsPDF({
+                    orientation: orientation,
+                    unit: 'mm',
+                    format: pageFormat
+                });
+                
+                const pdfWidth = pdf.internal.pageSize.getWidth();
+                const pdfHeight = pdf.internal.pageSize.getHeight();
+                
+                // Process each page
+                for (let i = 0; i < svgElements.length; i++) {
+                    if (i > 0) {
+                        pdf.addPage();
+                    }
+                    
+                    const canvas = await svgToCanvas(svgElements[i]);
+                    const imgData = canvas.toDataURL('image/png');
+                    
+                    // Calculate dimensions to fit the page
+                    const imgWidth = canvas.width;
+                    const imgHeight = canvas.height;
+                    const ratio = Math.min(pdfWidth / imgWidth, pdfHeight / imgHeight);
+                    
+                    const finalWidth = imgWidth * ratio;
+                    const finalHeight = imgHeight * ratio;
+                    
+                    // Center the image on the page
+                    const x = (pdfWidth - finalWidth) / 2;
+                    const y = (pdfHeight - finalHeight) / 2;
+                    
+                    pdf.addImage(imgData, 'PNG', x, y, finalWidth, finalHeight);
+                }
+                
+                pdf.save(`${currentFileName}_sheet_music.pdf`);
+                showStatus('PDF downloaded successfully!', 'success');
+                
+            } catch (error) {
+                console.error('PDF download error:', error);
+                showStatus(`Error downloading PDF: ${error.message}`, 'error');
+            }
+        });
+        
+        // Initialize when page loads
+        window.addEventListener('load', function() {
+            // Add a longer delay to ensure Verovio is fully loaded
+            setTimeout(initVerovio, 500);
+        });
+    </script>
+</body>
+</html> 
+
+
+ 

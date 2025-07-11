@@ -3,6 +3,7 @@ from flask_cors import CORS
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.utils.rnn import pack_padded_sequence
 import numpy as np
 import io
 import os
@@ -15,9 +16,234 @@ import base64
 import pretty_midi
 from datetime import datetime
 import soundfile as sf
+import gc
+import re
+from music21 import converter, stream, meter, key, pitch, duration, note, chord,environment
+import os
+import tempfile
+import subprocess
+
+
+us = environment.UserSettings()
+us['musicxmlPath'] = 'C:\\Program Files\\MuseScore 3\\bin\\MuseScore3.exe'
+us['musescoreDirectPNGPath'] = 'C:\\Program Files\\MuseScore 3\\bin\\MuseScore3.exe'
+print("MuseScore path for PNG:", us['musescoreDirectPNGPath'])
+print("MuseScore path for XML:", us['musicxmlPath'])
 
 app = Flask(__name__)
-CORS(app)  # Permet les requêtes cross-origin depuis votre application Next.js
+CORS(app, resources={r"/*": {"origins": "http://localhost:3000"}},
+     allow_headers=["Content-Type"], methods=["GET", "POST", "OPTIONS"])  # Permet les requêtes cross-origin depuis votre application Next.js
+
+class MidiToSheetConverter:
+    def __init__(self, midi_file_path):
+        self.midi_file_path = midi_file_path
+        self.score = None
+        self.us = us
+
+    def load_midi(self):
+        """Load MIDI file and convert to music21 stream"""
+        try:
+            self.score = converter.parse(self.midi_file_path)
+            print(f"Successfully loaded MIDI file: {self.midi_file_path}")
+            return True
+        except Exception as e:
+            print(f"Error loading MIDI file: {e}")
+            return False
+
+    def analyze_score(self):
+        """Analyze the musical content of the score"""
+        if not self.score:
+            print("No score loaded. Please load a MIDI file first.")
+            return
+
+        # Get key signature
+        key_sig = self.score.analyze('key')
+        print(f"Key signature: {key_sig}")
+
+        # Get time signature
+        time_sigs = self.score.flat.getElementsByClass(meter.TimeSignature)
+        if time_sigs:
+            print(f"Time signature: {time_sigs[0]}")
+
+        # Get tempo
+        tempos = self.score.flat.getElementsByClass('TempoIndication')
+        if tempos:
+            print(f"Tempo: {tempos[0]}")
+
+        # Count parts/instruments
+        parts = self.score.parts
+        print(f"Number of parts: {len(parts)}")
+
+        return {
+            'key': str(key_sig),
+            'time_signature': str(time_sigs[0]) if time_sigs else 'Not found',
+            'parts_count': len(parts)
+        }
+
+    def generate_musicxml(self, output_path=None):
+        """Generate MusicXML from the score"""
+        if not self.score:
+            print("No score loaded. Please load a MIDI file first.")
+            return None
+
+        if output_path is None:
+            output_path = os.path.splitext(self.midi_file_path)[0] + '.musicxml'
+
+        try:
+            self.score.write('musicxml', fp=output_path)
+            print(f"MusicXML saved to: {output_path}")
+            return output_path
+        except Exception as e:
+            print(f"Error generating MusicXML: {e}")
+            return None
+
+    # def generate_musicxml_string(self):
+    #     """Generate MusicXML string from the score without saving to file."""
+    #     if not self.score:
+    #         print("No score loaded.")
+    #         return None
+    #     try:
+    #         musicxml_string = self.score.musicxml
+    #         return musicxml_string
+    #     except Exception as e:
+    #         print(f"Error generating MusicXML string: {e}")
+    #         return None
+
+    def generate_png(self, output_path=None):
+        """Generate PNG image of the music sheet"""
+        if not self.score:
+            print("No score loaded. Please load a MIDI file first.")
+            return None
+    
+        musicxml_path = os.path.splitext(self.midi_file_path)[0] + '.musicxml'
+        # generated_xml_path = self.generate_musicxml(musicxml_path)
+        if not musicxml_path or not os.path.exists(musicxml_path):
+            print("Failed to generate MusicXML file required for PNG conversion.")
+            return None
+        if output_path is None:
+            output_path = os.path.splitext(self.midi_file_path)[0] + '.png'
+    
+        try:
+            command = [
+                    str(self.us['musescoreDirectPNGPath']),
+                    '-o', str(output_path),
+                    str(musicxml_path)
+                ]
+
+            print(f"Executing command: {' '.join(command)}")
+
+            result = subprocess.run(command, capture_output=True, text=True, check=True)
+            # Print MuseScore's output regardless, for debugging
+            if result.stdout:
+                print(f"MuseScore stdout:\n{result.stdout}")
+            if result.stderr:
+                print(f"MuseScore stderr:\n{result.stderr}")
+
+            if result.returncode != 0:
+                print(f"MuseScore command failed with exit code {result.returncode}")
+                print("Please ensure MuseScore 3 is correctly installed and accessible at the specified path.")
+                print("Also, check if the MusicXML file generated by music21 is valid and can be opened by MuseScore manually.")
+                return None
+
+            # Now check if the file exists after MuseScore has finished and (hopefully) succeeded
+            if os.path.exists(output_path):
+                print(f"PNG saved to: {output_path}")
+                return output_path
+            else:
+                print("MuseScore command completed without error, but PNG file was not found at expected path.")
+                print(f"Expected path: {output_path}")
+                # Essayer de chercher des fichiers PNG générés dans le répertoire courant
+                base_name = os.path.splitext(os.path.basename(self.midi_file_path))[0]
+                possible_paths = [
+                    f"{base_name}-1.png",  # MuseScore ajoute souvent -1 pour la première page
+                    f"{base_name}.png",
+                    os.path.join(os.path.dirname(output_path), f"{base_name}-1.png")
+                ]
+
+                for possible_path in possible_paths:
+                    if os.path.exists(possible_path):
+                        print(f"Found PNG at alternative path: {possible_path}")
+                        # Optionnel: renommer vers le chemin souhaité
+                        if possible_path != output_path:
+                            os.rename(possible_path, output_path)
+                            print(f"Renamed to: {output_path}")
+                        return output_path
+
+                return None
+
+        except Exception as e: # Catch any other unexpected errors
+            print(f"An unexpected error occurred during PNG generation: {e}")
+            return None
+
+    def simplify_score(self, max_parts=4):
+        """Simplify the score for better display"""
+        if not self.score:
+            return None
+
+        # If there are too many parts, combine or select the most important ones
+        if len(self.score.parts) > max_parts:
+            # Keep the first few parts (usually melody and bass)
+            simplified = stream.Score()
+            for i, part in enumerate(self.score.parts[:max_parts]):
+                simplified.append(part)
+            self.score = simplified
+
+        # Remove very short notes that might clutter the display
+        for part in self.score.parts:
+            for element in part.flat:
+                if hasattr(element, 'duration') and element.duration.quarterLength < 0.125:
+                    part.remove(element)
+
+        return self.score
+
+    def get_json_representation(self):
+        """Get a JSON representation of the score for web display"""
+        if not self.score:
+            return None
+
+        score_data = {
+            'parts': [],
+            'metadata': {}
+        }
+
+        # Add metadata
+        key_sig = self.score.analyze('key')
+        score_data['metadata']['key'] = str(key_sig)
+
+        time_sigs = self.score.flat.getElementsByClass(meter.TimeSignature)
+        if time_sigs:
+            score_data['metadata']['time_signature'] = str(time_sigs[0])
+
+        # Process each part
+        for i, part in enumerate(self.score.parts):
+            part_data = {
+                'part_number': i,
+                'instrument': str(part.getInstrument()) if part.getInstrument() else 'Unknown',
+                'notes': []
+            }
+
+            for element in part.flat:
+                if isinstance(element, note.Note):
+                    note_data = {
+                        'type': 'note',
+                        'pitch': str(element.pitch),
+                        'duration': float(element.duration.quarterLength),
+                        'offset': float(element.offset)
+                    }
+                    part_data['notes'].append(note_data)
+                elif isinstance(element, chord.Chord):
+                    chord_data = {
+                        'type': 'chord',
+                        'pitches': [str(p) for p in element.pitches],
+                        'duration': float(element.duration.quarterLength),
+                        'offset': float(element.offset)
+                    }
+                    part_data['notes'].append(chord_data)
+
+            score_data['parts'].append(part_data)
+
+        return score_data
+
 
 # Définition de l'architecture du modèle PerformanceNet
 class ConvBlock(nn.Module):
@@ -191,6 +417,72 @@ def pianoroll_to_midi(pianoroll, threshold=0.5, fs=16000, hop_length=256):
     
     return midi_bytes.getvalue()
 
+def midi_to_musicxml(midi_file_path, xml_file_path):
+    """
+    Converts a MIDI file to MusicXML using music21.
+
+    Args:
+        midi_file_path: Path to the input MIDI file.
+        xml_file_path: Path to save the output MusicXML file.
+    """
+    try:
+        midi_stream = converter.parse(midi_file_path)
+        midi_stream.write('musicxml', fp=xml_file_path)
+        print(f"Successfully converted {midi_file_path} to {xml_file_path}")
+    except Exception as e:
+        print(f"Error converting {midi_file_path}: {e}")
+
+
+
+# --- 2. Functions for Piano Roll to ABC (from your input) ---
+
+def extract_notes_from_piano_roll(piano_roll, time_resolution=0.1, velocity_threshold=0.5):
+    notes = []
+    # Iterate over each MIDI key (0-87 for 21-108)
+    for key_idx in range(piano_roll.shape[1]): # Use piano_roll.shape[1] for actual number of keys
+        midi_note = key_idx + 21 # MIDI notes from 21 (A0) to 108 (C8)
+        key_data = piano_roll[:, key_idx] # All frames for this single key
+
+        in_note = False
+        note_start_frame = 0
+
+        for frame_idx in range(len(key_data)):
+            if key_data[frame_idx] > velocity_threshold and not in_note:
+                # Note starts
+                note_start_frame = frame_idx
+                in_note = True
+            elif key_data[frame_idx] <= velocity_threshold and in_note:
+                # Note ends
+                note_end_frame = frame_idx
+                duration_frames = note_end_frame - note_start_frame
+                
+                # Convert duration to time units
+                duration_time = duration_frames * time_resolution
+                
+                # Only add if duration is meaningful
+                if duration_time > 0.05: # Minimum duration threshold
+                    notes.append({
+                        'midi': midi_note,
+                        'start_time': note_start_frame * time_resolution,
+                        'duration': duration_time,
+                        'velocity': np.mean(key_data[note_start_frame:note_end_frame]) # Average velocity over the note
+                    })
+                in_note = False
+        
+        # Handle notes that extend to the very end of the piano roll
+        if in_note:
+            note_end_frame = len(key_data)
+            duration_frames = note_end_frame - note_start_frame
+            duration_time = duration_frames * time_resolution
+            if duration_time > 0.05:
+                notes.append({
+                    'midi': midi_note,
+                    'start_time': note_start_frame * time_resolution,
+                    'duration': duration_time,
+                    'velocity': np.mean(key_data[note_start_frame:note_end_frame])
+                })
+    return notes
+
 @app.route('/predict', methods=['POST'])
 def predict():
     if request.method == 'POST':
@@ -260,85 +552,88 @@ def predict():
                     warning_message = f"Seulement {nb_notes} notes détectées avec un seuil de {threshold}. " \
                                      f"Essayez de réduire le seuil ou d'utiliser un autre fichier audio."
                 
-                # OPTIMISATION DE L'AFFICHAGE: Trouver les segments pertinents
-                if nb_notes > 0:
-                    # Déterminer les limites pertinentes pour le graphique
-                    active_frames = np.where(np.sum(binary_roll, axis=1) > 0)[0]
+                # # OPTIMISATION DE L'AFFICHAGE: Trouver les segments pertinents
+                # if nb_notes > 0:
+                #     # Déterminer les limites pertinentes pour le graphique
+                #     active_frames = np.where(np.sum(binary_roll, axis=1) > 0)[0]
                     
-                    if len(active_frames) > 0:
-                        # Trouver les limites des régions actives
-                        start_frame = max(0, active_frames[0] - 10)  # 10 frames avant la première note
-                        end_frame = min(pianoroll.shape[0], active_frames[-1] + 10)  # 10 frames après la dernière note
+                #     if len(active_frames) > 0:
+                #         # Trouver les limites des régions actives
+                #         start_frame = max(0, active_frames[0] - 10)  # 10 frames avant la première note
+                #         end_frame = min(pianoroll.shape[0], active_frames[-1] + 10)  # 10 frames après la dernière note
                         
-                        # Si la région est trop grande, identifier les segments les plus denses
-                        display_length = end_frame - start_frame
-                        if display_length > max_display_length:
-                            # Diviser en fenêtres et trouver les fenêtres les plus actives
-                            window_size = 50  # taille de la fenêtre d'analyse
-                            activity = []
+                #         # Si la région est trop grande, identifier les segments les plus denses
+                #         display_length = end_frame - start_frame
+                #         if display_length > max_display_length:
+                #             # Diviser en fenêtres et trouver les fenêtres les plus actives
+                #             window_size = 50  # taille de la fenêtre d'analyse
+                #             activity = []
                             
-                            for i in range(0, pianoroll.shape[0] - window_size, window_size // 2):  # Chevauchement de 50%
-                                window_activity = np.sum(binary_roll[i:i+window_size])
-                                activity.append((i, window_activity))
+                #             for i in range(0, pianoroll.shape[0] - window_size, window_size // 2):  # Chevauchement de 50%
+                #                 window_activity = np.sum(binary_roll[i:i+window_size])
+                #                 activity.append((i, window_activity))
                             
-                            # Trier les fenêtres par activité décroissante
-                            activity.sort(key=lambda x: x[1], reverse=True)
+                #             # Trier les fenêtres par activité décroissante
+                #             activity.sort(key=lambda x: x[1], reverse=True)
                             
-                            # Utiliser les N premières fenêtres les plus actives pour rester sous max_display_length
-                            top_windows = []
-                            cumulative_length = 0
-                            for win_start, _ in activity:
-                                if cumulative_length < max_display_length:
-                                    win_end = min(win_start + window_size, pianoroll.shape[0])
-                                    top_windows.append((win_start, win_end))
-                                    cumulative_length += win_end - win_start
-                                else:
-                                    break
+                #             # Utiliser les N premières fenêtres les plus actives pour rester sous max_display_length
+                #             top_windows = []
+                #             cumulative_length = 0
+                #             for win_start, _ in activity:
+                #                 if cumulative_length < max_display_length:
+                #                     win_end = min(win_start + window_size, pianoroll.shape[0])
+                #                     top_windows.append((win_start, win_end))
+                #                     cumulative_length += win_end - win_start
+                #                 else:
+                #                     break
                             
-                            # Fusionner les fenêtres qui se chevauchent
-                            if top_windows:
-                                top_windows.sort()  # Trier par temps croissant
-                                merged_windows = [top_windows[0]]
+                #             # Fusionner les fenêtres qui se chevauchent
+                #             if top_windows:
+                #                 top_windows.sort()  # Trier par temps croissant
+                #                 merged_windows = [top_windows[0]]
                                 
-                                for current_start, current_end in top_windows[1:]:
-                                    prev_start, prev_end = merged_windows[-1]
-                                    if current_start <= prev_end:
-                                        # Les fenêtres se chevauchent
-                                        merged_windows[-1] = (prev_start, max(prev_end, current_end))
-                                    else:
-                                        # Nouvelle fenêtre
-                                        merged_windows.append((current_start, current_end))
+                #                 for current_start, current_end in top_windows[1:]:
+                #                     prev_start, prev_end = merged_windows[-1]
+                #                     if current_start <= prev_end:
+                #                         # Les fenêtres se chevauchent
+                #                         merged_windows[-1] = (prev_start, max(prev_end, current_end))
+                #                     else:
+                #                         # Nouvelle fenêtre
+                #                         merged_windows.append((current_start, current_end))
                                 
-                                # Utiliser ces segments pour l'affichage
-                                display_segments = merged_windows
-                            else:
-                                # Fallback: afficher le début jusqu'à max_display_length
-                                display_segments = [(0, min(max_display_length, pianoroll.shape[0]))]
-                        else:
-                            # La région active est assez petite pour être entièrement affichée
-                            display_segments = [(start_frame, end_frame)]
-                    else:
-                        # Aucune note active, afficher juste le début
-                        display_segments = [(0, min(max_display_length, pianoroll.shape[0]))]
-                else:
-                    # Aucune note détectée, montrer juste le début du pianoroll
-                    display_segments = [(0, min(max_display_length, pianoroll.shape[0]))]
+                #                 # Utiliser ces segments pour l'affichage
+                #                 display_segments = merged_windows
+                #             else:
+                #                 # Fallback: afficher le début jusqu'à max_display_length
+                #                 display_segments = [(0, min(max_display_length, pianoroll.shape[0]))]
+                #         else:
+                #             # La région active est assez petite pour être entièrement affichée
+                #             display_segments = [(start_frame, end_frame)]
+                #     else:
+                #         # Aucune note active, afficher juste le début
+                #         display_segments = [(0, min(max_display_length, pianoroll.shape[0]))]
+                # else:
+                #     # Aucune note détectée, montrer juste le début du pianoroll
+                #     display_segments = [(0, min(max_display_length, pianoroll.shape[0]))]
                 
-                # Créer une figure pour chaque segment et les concaténer
-                plt.figure(figsize=(12, 8))
+                # # Créer une figure pour chaque segment et les concaténer
+                # plt.figure(figsize=(12, 8))
                 
-                # S'il y a plusieurs segments, utiliser une mise en page subplots
-                n_segments = len(display_segments)
-                total_display_frames = sum(end - start for start, end in display_segments)
+                # # S'il y a plusieurs segments, utiliser une mise en page subplots
+                # n_segments = len(display_segments)
+                # total_display_frames = sum(end - start for start, end in display_segments)
                 
-                # Si on a trop de segments, on en limite le nombre
-                if n_segments > 3:  # Limiter à 3 segments au maximum
-                    display_segments = display_segments[:3]
-                    n_segments = 3
+                # # Si on a trop de segments, on en limite le nombre
+                # if n_segments > 3:  # Limiter à 3 segments au maximum
+                #     display_segments = display_segments[:3]
+                #     n_segments = 3
                 
-                # Créer un affichage pour les probabilités brutes
-                plt.subplot(2, 1, 1)
-                
+                # # Créer un affichage pour les probabilités brutes
+                # plt.subplot(2, 1, 1)
+
+                display_segments = [(0, pianoroll.shape[0])]
+                n_segments = 1
+              
                 if n_segments == 1:
                     # Un seul segment: afficher normalement
                     start, end = display_segments[0]
@@ -363,7 +658,8 @@ def predict():
                 
                 plt.colorbar(label='Probabilités de notes (valeurs brutes)')
                 plt.xlabel('Temps (frames)')
-                plt.ylabel('Notes (MIDI)')
+
+                plt.ylabel('Notes (MIDI)')  
                 plt.grid(True, linestyle='--', alpha=0.7)
                 
                 # Créer un affichage pour le pianoroll binaire
@@ -402,8 +698,6 @@ def predict():
                 plt.close()
                 buf.seek(0)
                 img_base64 = base64.b64encode(buf.read()).decode('utf-8')
-                
-                # Convertir le pianoroll en fichier MIDI
                 try:
                     midi_bytes = pianoroll_to_midi(pianoroll, threshold, SR, HOP_LENGTH)
                     midi_base64 = base64.b64encode(midi_bytes).decode('utf-8')
@@ -411,9 +705,55 @@ def predict():
                     # Générer un nom de fichier avec timestamp
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     midi_filename = f"transcription_{timestamp}.mid"
+
+                    # --- IMPORTANT: Save the MIDI bytes to a file ---
+                    with open(midi_filename, 'wb') as f:
+                        f.write(midi_bytes)
+                    print(f"MIDI file saved as: {midi_filename}")
                     
                     midi_success = True
                     midi_message = "Fichier MIDI généré avec succès"
+
+                    # midi_to_musicxml
+                    converter = MidiToSheetConverter(midi_filename)
+
+                    if converter.load_midi():
+                        # Analyze the score
+                        analysis = converter.analyze_score()
+
+                        # Simplify if needed
+                        converter.simplify_score()
+
+                        # Generate outputs
+                        musicxml_path = converter.generate_musicxml()
+
+                        # Generate MusicXML string for direct use
+                        # musicxml_string = converter.generate_musicxml_string()
+
+                        # Convert MusicXML to base64 for transmission
+                        musicxml_base64 = None
+                        if musicxml_path and os.path.exists(musicxml_path):
+                            with open(musicxml_path, 'r', encoding='utf-8') as f:
+                                musicxml_content = f.read()
+                                musicxml_base64 = base64.b64encode(musicxml_content.encode('utf-8')).decode('utf-8')
+
+                        png_path = converter.generate_png()
+
+                        png_base64 = None
+                        if png_path and os.path.exists(png_path):
+                            with open(png_path, 'rb') as f:
+                                png_content = f.read()
+                                png_base64 = base64.b64encode(png_content).decode('utf-8')
+
+
+
+                        # Get JSON representation for web use
+                        json_data = converter.get_json_representation()
+
+                        print("Conversion complete!")
+                        print(f"MusicXML: {musicxml_path}")
+                        print(f"PNG: {png_path}")
+                        print(f"JSON data available for web display")
                 except Exception as midi_error:
                     print(f"Erreur lors de la génération du MIDI: {str(midi_error)}")
                     import traceback
@@ -439,13 +779,19 @@ def predict():
                     'midi_base64': midi_base64,
                     'midi_filename': midi_filename,
                     'midi_success': midi_success,
-                    'midi_message': midi_message
+                    'midi_message': midi_message,
+                    # 'xml_string': musicxml_string,  # Raw MusicXML string
+                    'xml_base64': musicxml_base64,  # Base64 encoded MusicXML
+                    'xml_filename': musicxml_path.split('/')[-1] if musicxml_path else None,  # Just the filename
+                    'png_path': png_path,  # Path to the generated PNG
+                    'png_base64': png_base64,  # Base64 encoded PNG
                 }
                 
                 if warning_message:
                     result['warning'] = warning_message
                 
                 status = 'warning' if warning_message else 'success'
+
                 return jsonify({'status': status, 'music_data': result})
                 
         except Exception as e:
@@ -454,67 +800,202 @@ def predict():
             traceback.print_exc()
             return jsonify({'status': 'error', 'message': str(e)}), 500
 
+# Generation partition to audio      
+# Paramètres
+DURATION = 30
+SR = 22050
+FS = 86
+N_FFT = 254
+HOP_LENGTH = 256
+WIN_LENGTH = 254
+N_ITER = 100
+MAX_FRAMES = 500
+class PianoToAudioModel(nn.Module):
+    def __init__(self, input_dim=128, hidden_dim=256, output_dim=128, num_layers=2, dropout=0.6):
+        super(PianoToAudioModel, self).__init__()
+        self.lstm = nn.LSTM(input_size=input_dim, hidden_size=hidden_dim, num_layers=num_layers,
+                            batch_first=True, dropout=dropout if num_layers > 1 else 0)
+        self.attention = nn.MultiheadAttention(embed_dim=hidden_dim, num_heads=8, dropout=dropout)
+        self.bn = nn.BatchNorm1d(hidden_dim)
+        self.conv1 = nn.Conv1d(hidden_dim, hidden_dim, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv1d(hidden_dim, hidden_dim // 2, kernel_size=3, padding=1)
+        self.conv3 = nn.Conv1d(hidden_dim // 2, hidden_dim // 4, kernel_size=3, padding=1)
+        self.dropout = nn.Dropout(dropout)
+        self.relu = nn.ReLU()
+        self.fc = nn.Linear(hidden_dim // 4, output_dim)
+        self.sigmoid = nn.Sigmoid()
+
+        self._initialize_weights()
+
+    def _initialize_weights(self):
+        for name, param in self.named_parameters():
+            if 'weight' in name:
+                if param.dim() >= 2:
+                    nn.init.xavier_uniform_(param)
+                else:
+                    nn.init.uniform_(param, -0.1, 0.1)
+            elif 'bias' in name:
+                nn.init.zeros_(param)
+
+    def forward(self, x, lengths):
+        if len(x.shape) == 2:
+            x = x.unsqueeze(0)
+            lengths = [lengths] if not isinstance(lengths, (list, torch.Tensor)) else lengths
+        x_packed = pack_padded_sequence(x, lengths, batch_first=True, enforce_sorted=False)
+        x_packed, _ = self.lstm(x_packed)
+        x, _ = nn.utils.rnn.pad_packed_sequence(x_packed, batch_first=True)
+        x = x.permute(1, 0, 2)
+        attn_output, _ = self.attention(x, x, x)
+        x = x + attn_output
+        x = x.permute(1, 2, 0)
+        x = self.bn(x)
+        x = self.conv1(x)
+        x = self.relu(x)
+        x = self.dropout(x)
+        x = self.conv2(x)
+        x = self.relu(x)
+        x = self.dropout(x)
+        x = self.conv3(x)
+        x = self.relu(x)
+        x = self.dropout(x)
+        x = x.permute(0, 2, 1)
+        x = self.fc(x)
+        return self.sigmoid(x)
+
 # Charger le modèle génération partition -> audio
-model2 = torch.load("best_piano_to_audio_model17.pth", map_location="cpu")
+model2 = PianoToAudioModel()
+model2.load_state_dict(torch.load("best_piano_to_audio_model17.pth", map_location="cpu"))
 model2.eval()
 
-def midi_to_pianoroll(midi_data, fs=100):
-    pm = pretty_midi.PrettyMIDI(io.BytesIO(midi_data))
-    # piano_roll : shape (128, T)
-    pr = pm.get_piano_roll(fs=fs)
-    # transpose ou normalisation éventuelle
-    return pr.astype(np.float32)
+def midi_to_pianoroll(midi_data, fs=FS):
+    try:
+        # Vérifier si midi_data est vide
+        if not midi_data:
+            raise ValueError("Fichier MIDI vide ou non fourni")
+        
+        pm = pretty_midi.PrettyMIDI(io.BytesIO(midi_data))
+        end_time = min(pm.get_end_time(), DURATION)
+        if end_time <= 0:
+            raise ValueError("Le fichier MIDI n'a pas de durée valide")
+        
+        times = np.linspace(0, end_time, int(end_time * fs))
+        pianoroll = pm.get_piano_roll(fs=fs, times=times)
+        pianoroll = pianoroll.T  # (T, 128)
+        pianoroll = (pianoroll > 0).astype(np.float32)
+        
+        # Padding ou troncature à MAX_FRAMES
+        current_length = pianoroll.shape[0]
+        if current_length < MAX_FRAMES:
+            padding = np.zeros((MAX_FRAMES - current_length, pianoroll.shape[1]), dtype=np.float32)
+            pianoroll = np.concatenate([pianoroll, padding], axis=0)
+        elif current_length > MAX_FRAMES:
+            pianoroll = pianoroll[:MAX_FRAMES, :]
+        
+        print(f"Pianoroll shape: {pianoroll.shape}")  # Débogage
+        return pianoroll, min(current_length, MAX_FRAMES)
+    except ValueError as e:
+        raise ValueError(f"Erreur de validation MIDI : {e}")
+    except Exception as e:
+        raise RuntimeError(f"Erreur lors de la conversion MIDI en pianoroll : {e}")
 
-def predict_spectrogram(pianoroll):
-    # reshape / batch dimension selon ton modèle
-    x = torch.from_numpy(pianoroll).unsqueeze(0).unsqueeze(0)  # ex.
-    with torch.no_grad():
-        spec = model(x)  # shape (1, freq_bins, time_frames)
-    return spec.squeeze(0).cpu().numpy()
+def predict_spectrogram(pianoroll, length, chunk_size=1000):
+    pianoroll_tensor = torch.tensor(pianoroll, dtype=torch.float32)
+    outputs = []
+    
+    # Traiter par segments
+    for i in range(0, length, chunk_size):
+        chunk = pianoroll_tensor[i:i + chunk_size]  # Segment de taille chunk_size
+        input_tensor = chunk.unsqueeze(0)  # (1, chunk_T, 128)
+        chunk_length = [chunk.shape[0]]
 
-def spectrogram_to_audio(spec, n_fft=1024, hop_length=256, n_iter=60):
+        with torch.no_grad():
+            output = model2(input_tensor, chunk_length)  # output shape: (1, chunk_T, 128)
+            print(f"Output shape for chunk {i}: {output.shape}")  # Débogage
+        outputs.append(output.squeeze(0))  # (chunk_T, 128)
+
+    # Recombinaison des segments
+    full_output = torch.cat(outputs, dim=0)  # (T, 128)
+    print(f"Full output shape: {full_output.shape}")  # Débogage
+    spectrogram = full_output.numpy()
+    # Normalisation comme dans generate_spectrogram
+    spec_min, spec_max = spectrogram.min(), spectrogram.max()
+    spectrogram = np.clip(spectrogram, 0, 1)
+    del pianoroll_tensor, full_output
+    gc.collect()
+    return spectrogram.T, spec_min, spec_max  # (128, T)
+
+def spectrogram_to_audio(spectrogram, spec_min, spec_max):
+    print(f"Spectrogram shape: {spectrogram.shape}")  # Débogage
     # spec doit être magnitude spectrogram
-    audio = librosa.griffinlim(spec,
-                               n_fft=n_fft,
-                               hop_length=hop_length,
-                               win_length=n_fft,
-                               n_iter=n_iter)
+    if spectrogram.shape[0] != N_FFT // 2 + 1:
+        raise ValueError(f"Spectrogram frequency dimension {spectrogram.shape[0]} does not match expected {N_FFT // 2 + 1}")
+    # Inverser la normalisation
+    spectrogram = spectrogram * (spec_max - spec_min) + spec_min
+    spectrogram = np.expm1(spectrogram)
+    spectrogram = np.clip(spectrogram, 0, spectrogram.max() * 1.1)
+    try:
+        audio = librosa.griffinlim(spectrogram, n_iter=N_ITER, hop_length=HOP_LENGTH,
+                                  win_length=WIN_LENGTH, n_fft=N_FFT)
+    except Exception as e:
+        raise RuntimeError(f"Erreur dans griffinlim : {e}")
+    audio = audio / max(abs(audio)) if np.max(np.abs(audio)) > 0 else audio
+    print(f"Audio shape: {audio.shape}")  # Débogag
     return audio
 
 @app.route("/midi-to-audio", methods=["POST"])
 def midi_to_audio_endpoint():
-    file = request.files.get("file")
-    if not file or not file.filename.endswith(".mid"):
-        return jsonify({"error": "No MIDI file"}), 400
+    try:
+        file = request.files.get("file")
+        if not file or not file.filename.endswith(".midi"):
+            return jsonify({"error": "No MIDI file"}), 400
+        midi_bytes = file.read()
+        if not midi_bytes:
+            return jsonify({"error": "Fichier MIDI vide"}), 400
+        
+        pianoroll, length = midi_to_pianoroll(midi_bytes)
+        spec, spec_min, spec_max = predict_spectrogram(pianoroll, length)
+        audio = spectrogram_to_audio(spec, spec_min, spec_max)
 
-    midi_bytes = file.read()
-    pr = midi_to_pianoroll(midi_bytes)
-    spec = predict_spectrogram(pr)
-    audio = spectrogram_to_audio(spec)
+        # Sauvegarder WAV en mémoire
+        wav_io = io.BytesIO()
+        print(f"Audio length: {len(audio)}, wav_io type: {type(wav_io)}")  # Débogage
+        sf.write(wav_io, audio, SR, format="WAV")
+        wav_io.seek(0)
 
-    # Sauvegarder WAV en mémoire
-    wav_io = io.BytesIO()
-    sf.write(wav_io, audio, samplerate=22050, format="WAV")
-    wav_io.seek(0)
+        # Générer spectrogramme en image (base64)
+        plt.figure(figsize=(6, 4))
+        plt.imshow(20 * np.log10(spec + 1e-6), origin="lower", aspect="auto")
+        plt.axis("off")
+        img_io = io.BytesIO()
+        plt.savefig(img_io, bbox_inches="tight", pad_inches=0, format="png")
+        plt.close()
+        img_io.seek(0)
 
-    # Générer spectrogramme en image (base64)
-    plt.figure(figsize=(6, 4))
-    plt.imshow(20 * np.log10(spec + 1e-6), origin="lower", aspect="auto")
-    plt.axis("off")
-    img_io = io.BytesIO()
-    plt.savefig(img_io, bbox_inches="tight", pad_inches=0)
-    plt.close()
-    img_io.seek(0)
+        # Lire et encoder l'audio
+        wav_io.seek(0)
+        audio_base64 = base64.b64encode(wav_io.read()).decode('utf-8')
 
-    return send_file(
-        wav_io,
-        mimetype="audio/wav",
-        as_attachment=False,
-        attachment_filename="output.wav"
-    ), 200, {
-      "X-Spectrogram": "data:image/png;base64," + 
-          __import__("base64").b64encode(img_io.read()).decode()
-    }
+        # Lire et encoder l'image
+        img_io.seek(0)
+        spectrogram_base64 = base64.b64encode(img_io.read()).decode('utf-8')
+
+
+        # Retourner les deux dans un JSON
+        return jsonify({
+            'status': 'success',
+            "audio": "data:audio/wav;base64," + audio_base64,
+            "spectrogram": "data:image/png;base64," + spectrogram_base64
+        }), 200
+    except ValueError as e:
+        app.logger.error(f"Erreur de validation: {str(e)}")
+        return jsonify({"error": str(e)}), 400
+    except RuntimeError as e:
+        app.logger.error(f"Erreur de mémoire ou de traitement: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+    except Exception as e:
+        app.logger.error(f"Erreur inattendue: {str(e)}")
+        return jsonify({"error": f"Erreur interne: {str(e)}"}), 500
+
 
 @app.route('/health', methods=['GET'])
 def health_check():
