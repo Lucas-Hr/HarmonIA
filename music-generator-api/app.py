@@ -8,7 +8,6 @@ import numpy as np
 import io
 import os
 import librosa
-from flask_cors import CORS
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')  # Important pour l'utilisation non-interactive (serveur)
@@ -19,7 +18,6 @@ import soundfile as sf
 import gc
 import re
 from music21 import converter, stream, meter, key, pitch, duration, note, chord,environment
-import os
 import tempfile
 import subprocess
 from torch.utils.data import Dataset, DataLoader
