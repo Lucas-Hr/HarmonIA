@@ -477,8 +477,8 @@ except Exception as e:
 
 # Paramètres pour le prétraitement audio
 SR = 16000  # Fréquence d'échantillonnage
-N_FFT = 1024
-HOP_LENGTH = 256
+N_FFT = 2048
+HOP_LENGTH = 160
 N_MELS = 88  # Correspondant aux 88 touches du piano
 MIN_DB = -80
 
@@ -512,7 +512,7 @@ def audio_to_melspectrogram(audio_bytes):
         raise Exception(f"Erreur lors du prétraitement audio: {str(e)}")
 
 def pianoroll_to_midi(pianoroll, onsets, offsets, pianoroll_thresholds=[0.33, 0.51, 0.54, 0.54, 0.51, 0.45, 0.48, 0.29], 
-                      onset_threshold=0.4, offset_threshold=0.4, fs=16000, hop_length=256):
+                      onset_threshold=0.4, offset_threshold=0.4, fs=16000, hop_length=160):
     """
     Convertit un pianoroll en fichier MIDI.
     
