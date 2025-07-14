@@ -4,7 +4,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pack_padded_sequence
-from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import io
 import os
@@ -23,9 +22,9 @@ from music21 import converter, stream, meter, key, pitch, duration, note, chord,
 import os
 import tempfile
 import subprocess
+from torch.utils.data import Dataset, DataLoader
 import scipy.ndimage
 
-# Configuration de music21
 us = environment.UserSettings()
 us['musicxmlPath'] = 'C:\\Program Files\\MuseScore 3\\bin\\MuseScore3.exe'
 us['musescoreDirectPNGPath'] = 'C:\\Program Files\\MuseScore 3\\bin\\MuseScore3.exe'
@@ -249,56 +248,51 @@ class MidiToSheetConverter:
 
 # Définition du modèle OptimizedPerformanceNetModel
 class OptimizedPerformanceNetModel(nn.Module):
-    def __init__(self, input_channels=1, output_channels=1):
+    def __init__(self):
         super(OptimizedPerformanceNetModel, self).__init__()
         self.enc1 = nn.Sequential(
-            nn.Conv2d(input_channels, 64, kernel_size=3, padding=1),
+            nn.Conv2d(1, 64, kernel_size=3, padding=1),
             nn.BatchNorm2d(64),
-            nn.ReLU(),
+            nn.LeakyReLU(0.2),
             nn.Conv2d(64, 64, kernel_size=3, padding=1),
             nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.Dropout(0.2)
+            nn.LeakyReLU(0.2)
         )
         self.pool1 = nn.MaxPool2d(2, 2)
         self.enc2 = nn.Sequential(
             nn.Conv2d(64, 128, kernel_size=3, padding=1),
             nn.BatchNorm2d(128),
-            nn.ReLU(),
+            nn.LeakyReLU(0.2),
             nn.Conv2d(128, 128, kernel_size=3, padding=1),
             nn.BatchNorm2d(128),
-            nn.ReLU(),
-            nn.Dropout(0.2)
+            nn.LeakyReLU(0.2)
         )
         self.pool2 = nn.MaxPool2d(2, 2)
         self.enc3 = nn.Sequential(
             nn.Conv2d(128, 256, kernel_size=3, padding=1),
             nn.BatchNorm2d(256),
-            nn.ReLU(),
+            nn.LeakyReLU(0.2),
             nn.Conv2d(256, 256, kernel_size=3, padding=1),
             nn.BatchNorm2d(256),
-            nn.ReLU(),
-            nn.Dropout(0.2)
+            nn.LeakyReLU(0.2)
         )
         self.pool3 = nn.MaxPool2d(2, 2)
         self.enc4 = nn.Sequential(
             nn.Conv2d(256, 512, kernel_size=3, padding=1),
             nn.BatchNorm2d(512),
-            nn.ReLU(),
+            nn.LeakyReLU(0.2),
             nn.Conv2d(512, 512, kernel_size=3, padding=1),
             nn.BatchNorm2d(512),
-            nn.ReLU(),
-            nn.Dropout(0.2)
+            nn.LeakyReLU(0.2)
         )
         self.pool4 = nn.MaxPool2d(2, 2)
         self.bottleneck = nn.Sequential(
             nn.Conv2d(512, 1024, kernel_size=3, padding=1),
             nn.BatchNorm2d(1024),
-            nn.ReLU(),
+            nn.LeakyReLU(0.2),
             nn.Conv2d(1024, 1024, kernel_size=3, padding=1),
             nn.BatchNorm2d(1024),
-            nn.ReLU(),
-            nn.Dropout(0.2)
+            nn.LeakyReLU(0.2)
         )
         self.upconv4 = nn.ConvTranspose2d(1024, 512, kernel_size=2, stride=2)
         self.dec4 = nn.Sequential(
@@ -307,8 +301,7 @@ class OptimizedPerformanceNetModel(nn.Module):
             nn.ReLU(),
             nn.Conv2d(512, 512, kernel_size=3, padding=1),
             nn.BatchNorm2d(512),
-            nn.ReLU(),
-            nn.Dropout(0.2)
+            nn.ReLU()
         )
         self.upconv3 = nn.ConvTranspose2d(512, 256, kernel_size=2, stride=2)
         self.dec3 = nn.Sequential(
@@ -317,8 +310,7 @@ class OptimizedPerformanceNetModel(nn.Module):
             nn.ReLU(),
             nn.Conv2d(256, 256, kernel_size=3, padding=1),
             nn.BatchNorm2d(256),
-            nn.ReLU(),
-            nn.Dropout(0.2)
+            nn.ReLU()
         )
         self.upconv2 = nn.ConvTranspose2d(256, 128, kernel_size=2, stride=2)
         self.dec2 = nn.Sequential(
@@ -327,8 +319,7 @@ class OptimizedPerformanceNetModel(nn.Module):
             nn.ReLU(),
             nn.Conv2d(128, 128, kernel_size=3, padding=1),
             nn.BatchNorm2d(128),
-            nn.ReLU(),
-            nn.Dropout(0.2)
+            nn.ReLU()
         )
         self.upconv1 = nn.ConvTranspose2d(128, 64, kernel_size=2, stride=2)
         self.dec1 = nn.Sequential(
@@ -337,15 +328,13 @@ class OptimizedPerformanceNetModel(nn.Module):
             nn.ReLU(),
             nn.Conv2d(64, 64, kernel_size=3, padding=1),
             nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.Dropout(0.2)
+            nn.ReLU()
         )
-        self.final_conv_pianoroll = nn.Conv2d(64, output_channels, kernel_size=1)
-        self.final_conv_onset = nn.Conv2d(64, output_channels, kernel_size=1)
-        self.final_conv_offset = nn.Conv2d(64, output_channels, kernel_size=1)
+        self.final_conv_pianoroll = nn.Conv2d(64, 1, kernel_size=1)
+        self.final_conv_onset = nn.Conv2d(64, 1, kernel_size=1)
+        self.final_conv_offset = nn.Conv2d(64, 1, kernel_size=1)
 
     def forward(self, x):
-        x = x.unsqueeze(1)
         enc1 = self.enc1(x)
         enc2 = self.enc2(self.pool1(enc1))
         enc3 = self.enc3(self.pool2(enc2))
@@ -363,16 +352,15 @@ class OptimizedPerformanceNetModel(nn.Module):
         x = self.upconv1(x)
         x = torch.cat([x, enc1], dim=1)
         x = self.dec1(x)
-        pianoroll = self.final_conv_pianoroll(x)
-        onset = self.final_conv_onset(x)
-        offset = self.final_conv_offset(x)
-        return pianoroll.squeeze(1), onset.squeeze(1), offset.squeeze(1)
+        pianoroll = self.final_conv_pianoroll(x).squeeze(1)
+        onset = self.final_conv_onset(x).squeeze(1)
+        offset = self.final_conv_offset(x).squeeze(1)
+        return pianoroll, onset, offset
 
 # Post-traitement
 def advanced_post_processing(predictions, confidence_thresholds=[0.33, 0.51, 0.54, 0.54, 0.51, 0.45, 0.48, 0.29]):
     processed = predictions.copy()
     octave_ranges = [(i * 11, (i + 1) * 11) for i in range(8)]
-    
     for i, (start, end) in enumerate(octave_ranges):
         threshold = confidence_thresholds[i]
         low_confidence_mask = (processed[:, start:end] > 0.2) & (processed[:, start:end] < threshold)
@@ -450,15 +438,12 @@ def reconstruct_pianoroll(predictions, segment_length, hop_length, total_length)
 # Charger le modèle
 def load_model():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # Créer une instance du modèle
-    model = OptimizedPerformanceNetModel(input_channels=1, output_channels=1).to(device)
-    
-    # Charger les poids pré-entraînés
+    model = OptimizedPerformanceNetModel().to(device)
     model_path = 'GenerPart-9-22.pth'
     if os.path.exists(model_path):
         try:
-            model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
-            model.eval()  # Mettre le modèle en mode évaluation
+            model.load_state_dict(torch.load(model_path, map_location=device))
+            model.eval()
             print("Modèle chargé avec succès!")
         except RuntimeError as e:
             print(f"Erreur lors du chargement du modèle {model_path}: {e}")
@@ -468,7 +453,7 @@ def load_model():
         raise FileNotFoundError(f"Le fichier {model_path} n'existe pas!")
     return model, device
 
-# Charger le modèle au démarrage de l'application
+# Charger le modèle au démarrage
 try:
     model, device = load_model()
 except Exception as e:
@@ -529,7 +514,8 @@ def pianoroll_to_midi(pianoroll, onsets, offsets, pianoroll_thresholds=[0.33, 0.
     midi = pretty_midi.PrettyMIDI()
     
     # Ajouter un instrument (piano)
-    piano = pretty_midi.Instrument(program=0) # 0 = Piano
+    piano_program = 0  # 0 = Piano
+    piano = pretty_midi.Instrument(program=piano_program)
     
     # Créer une version binaire du pianoroll
     pianoroll_binary = np.zeros_like(pianoroll)
@@ -646,6 +632,7 @@ def predict():
     file = request.files['file']
     if file.filename == '':
         return jsonify({'error': 'Aucun fichier sélectionné'}), 400
+        
     try:
         audio_bytes = file.read()
         mel_spec = audio_to_melspectrogram(audio_bytes)
@@ -669,9 +656,9 @@ def predict():
                 spec_batch = spec_batch.to(device, non_blocking=True)
                 if device.type == 'cuda':
                     with torch.amp.autocast(device_type='cuda'):
-                        pred_pianoroll, pred_onset, pred_offset = model(spec_batch)
+                        pred_pianoroll, pred_onset, pred_offset = model(spec_batch.unsqueeze(1))
                 else:
-                    pred_pianoroll, pred_onset, pred_offset = model(spec_batch)
+                    pred_pianoroll, pred_onset, pred_offset = model(spec_batch.unsqueeze(1))
                 pred_pianoroll = torch.sigmoid(pred_pianoroll).cpu().numpy()
                 pred_onset = torch.sigmoid(pred_onset).cpu().numpy()
                 pred_offset = torch.sigmoid(pred_offset).cpu().numpy()
