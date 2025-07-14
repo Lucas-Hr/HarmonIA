@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pack_padded_sequence
+from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import io
 import os
@@ -22,8 +23,9 @@ from music21 import converter, stream, meter, key, pitch, duration, note, chord,
 import os
 import tempfile
 import subprocess
+import scipy.ndimage
 
-
+# Configuration de music21
 us = environment.UserSettings()
 us['musicxmlPath'] = 'C:\\Program Files\\MuseScore 3\\bin\\MuseScore3.exe'
 us['musescoreDirectPNGPath'] = 'C:\\Program Files\\MuseScore 3\\bin\\MuseScore3.exe'
@@ -245,83 +247,233 @@ class MidiToSheetConverter:
         return score_data
 
 
-# Définition de l'architecture du modèle PerformanceNet
-class ConvBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3, padding=1):
-        super(ConvBlock, self).__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, padding=padding)
-        self.bn = nn.BatchNorm2d(out_channels)
-
-    def forward(self, x):
-        return F.relu(self.bn(self.conv(x)))
-
-class PerformanceNetModel(nn.Module):
+# Définition du modèle OptimizedPerformanceNetModel
+class OptimizedPerformanceNetModel(nn.Module):
     def __init__(self, input_channels=1, output_channels=1):
-        super(PerformanceNetModel, self).__init__()
-
-        # Encodeur (spectrogramme → features)
-        self.encoder = nn.Sequential(
-            ConvBlock(input_channels, 32),
-            nn.MaxPool2d(2, 2),  # 1/2
-            ConvBlock(32, 64),
-            nn.MaxPool2d(2, 2),  # 1/4
-            ConvBlock(64, 128),
-            nn.MaxPool2d(2, 2),  # 1/8
-            ConvBlock(128, 256)
+        super(OptimizedPerformanceNetModel, self).__init__()
+        self.enc1 = nn.Sequential(
+            nn.Conv2d(input_channels, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.Dropout(0.2)
         )
-
-        # Goulot d'étranglement
-        self.bottleneck = ConvBlock(256, 256)
-
-        # Décodeur (features → pianoroll)
-        self.decoder = nn.Sequential(
-            ConvBlock(256, 128),
-            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),  # 2x
-            ConvBlock(128, 64),
-            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),  # 4x
-            ConvBlock(64, 32),
-            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),  # 8x
-            nn.Conv2d(32, output_channels, kernel_size=1)
+        self.pool1 = nn.MaxPool2d(2, 2)
+        self.enc2 = nn.Sequential(
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+            nn.Conv2d(128, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+            nn.Dropout(0.2)
         )
+        self.pool2 = nn.MaxPool2d(2, 2)
+        self.enc3 = nn.Sequential(
+            nn.Conv2d(128, 256, kernel_size=3, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
+            nn.Conv2d(256, 256, kernel_size=3, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
+            nn.Dropout(0.2)
+        )
+        self.pool3 = nn.MaxPool2d(2, 2)
+        self.enc4 = nn.Sequential(
+            nn.Conv2d(256, 512, kernel_size=3, padding=1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(),
+            nn.Conv2d(512, 512, kernel_size=3, padding=1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(),
+            nn.Dropout(0.2)
+        )
+        self.pool4 = nn.MaxPool2d(2, 2)
+        self.bottleneck = nn.Sequential(
+            nn.Conv2d(512, 1024, kernel_size=3, padding=1),
+            nn.BatchNorm2d(1024),
+            nn.ReLU(),
+            nn.Conv2d(1024, 1024, kernel_size=3, padding=1),
+            nn.BatchNorm2d(1024),
+            nn.ReLU(),
+            nn.Dropout(0.2)
+        )
+        self.upconv4 = nn.ConvTranspose2d(1024, 512, kernel_size=2, stride=2)
+        self.dec4 = nn.Sequential(
+            nn.Conv2d(1024, 512, kernel_size=3, padding=1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(),
+            nn.Conv2d(512, 512, kernel_size=3, padding=1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(),
+            nn.Dropout(0.2)
+        )
+        self.upconv3 = nn.ConvTranspose2d(512, 256, kernel_size=2, stride=2)
+        self.dec3 = nn.Sequential(
+            nn.Conv2d(512, 256, kernel_size=3, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
+            nn.Conv2d(256, 256, kernel_size=3, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
+            nn.Dropout(0.2)
+        )
+        self.upconv2 = nn.ConvTranspose2d(256, 128, kernel_size=2, stride=2)
+        self.dec2 = nn.Sequential(
+            nn.Conv2d(256, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+            nn.Conv2d(128, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+            nn.Dropout(0.2)
+        )
+        self.upconv1 = nn.ConvTranspose2d(128, 64, kernel_size=2, stride=2)
+        self.dec1 = nn.Sequential(
+            nn.Conv2d(128, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.Dropout(0.2)
+        )
+        self.final_conv_pianoroll = nn.Conv2d(64, output_channels, kernel_size=1)
+        self.final_conv_onset = nn.Conv2d(64, output_channels, kernel_size=1)
+        self.final_conv_offset = nn.Conv2d(64, output_channels, kernel_size=1)
 
     def forward(self, x):
-        # Redimensionner pour le format CNN (batch, channels, hauteur, largeur)
-        # Entrée: (batch, seq_len, n_mels) -> (batch, 1, seq_len, n_mels)
         x = x.unsqueeze(1)
+        enc1 = self.enc1(x)
+        enc2 = self.enc2(self.pool1(enc1))
+        enc3 = self.enc3(self.pool2(enc2))
+        enc4 = self.enc4(self.pool3(enc3))
+        x = self.bottleneck(self.pool4(enc4))
+        x = self.upconv4(x)
+        x = torch.cat([x, enc4], dim=1)
+        x = self.dec4(x)
+        x = self.upconv3(x)
+        x = torch.cat([x, enc3], dim=1)
+        x = self.dec3(x)
+        x = self.upconv2(x)
+        x = torch.cat([x, enc2], dim=1)
+        x = self.dec2(x)
+        x = self.upconv1(x)
+        x = torch.cat([x, enc1], dim=1)
+        x = self.dec1(x)
+        pianoroll = self.final_conv_pianoroll(x)
+        onset = self.final_conv_onset(x)
+        offset = self.final_conv_offset(x)
+        return pianoroll.squeeze(1), onset.squeeze(1), offset.squeeze(1)
 
-        # Encoder
-        features = self.encoder(x)
+# Post-traitement
+def advanced_post_processing(predictions, confidence_thresholds=[0.33, 0.51, 0.54, 0.54, 0.51, 0.45, 0.48, 0.29]):
+    processed = predictions.copy()
+    octave_ranges = [(i * 11, (i + 1) * 11) for i in range(8)]
+    
+    for i, (start, end) in enumerate(octave_ranges):
+        threshold = confidence_thresholds[i]
+        low_confidence_mask = (processed[:, start:end] > 0.2) & (processed[:, start:end] < threshold)
+        processed[:, start:end][low_confidence_mask] = 0
+        for pitch in range(start, end):
+            pitch_roll = processed[:, pitch]
+            binary_roll = pitch_roll > threshold
+            labeled, num_labels = scipy.ndimage.label(binary_roll)
+            for label in range(1, num_labels + 1):
+                segment_mask = labeled == label
+                segment_indices = np.where(segment_mask)[0]
+                if len(segment_indices) < 2:
+                    processed[segment_mask, pitch] = 0
+                    continue
+                start_idx = max(0, segment_indices[0] - 2)
+                end_idx = min(len(pitch_roll), segment_indices[-1] + 3)
+                context_before = pitch_roll[start_idx:segment_indices[0]]
+                context_after = pitch_roll[segment_indices[-1]+1:end_idx]
+                if len(context_before) > 0 and np.mean(context_before) > 0.3:
+                    extension_mask = context_before > 0.3
+                    processed[start_idx:segment_indices[0]][extension_mask, pitch] = threshold + 0.05
+                if len(context_after) > 0 and np.mean(context_after) > 0.3:
+                    extension_mask = context_after > 0.3
+                    processed[segment_indices[-1]+1:end_idx][extension_mask, pitch] = threshold + 0.05
+    for pitch in range(processed.shape[1]):
+        pitch_roll = processed[:, pitch]
+        binary_roll = pitch_roll > confidence_thresholds[pitch // 11]
+        kernel = np.ones(4)
+        opened = scipy.ndimage.binary_opening(binary_roll, structure=kernel)
+        processed[~opened, pitch] = 0
+    for t in range(processed.shape[0]):
+        frame = processed[t, :]
+        strong_notes = np.where(frame > confidence_thresholds[pitch // 11] + 0.2)[0]
+        for note in strong_notes:
+            if note + 12 < len(frame) and frame[note + 12] > 0.25:
+                processed[t, note + 12] = min(frame[note + 12] + 0.05, 1.0)
+            if note + 7 < len(frame) and frame[note + 7] > 0.25:
+                processed[t, note + 7] = min(frame[note + 7] + 0.03, 1.0)
+    return processed
 
-        # Bottleneck
-        features = self.bottleneck(features)
+# Classe pour segmenter les données
+class SpectrogramDataset(Dataset):
+    def __init__(self, spectrogram, segment_length=400, overlap=0.5):
+        self.spectrogram = spectrogram
+        self.segment_length = segment_length
+        self.hop_length = int(segment_length * (1 - overlap))
+        self.num_segments = max(1, (spectrogram.shape[0] - segment_length) // self.hop_length + 1)
+        
+    def __len__(self):
+        return self.num_segments
+    
+    def __getitem__(self, idx):
+        start = idx * self.hop_length
+        end = start + self.segment_length
+        spec_segment = self.spectrogram[start:end, :]
+        if spec_segment.shape[0] < self.segment_length:
+            pad_length = self.segment_length - spec_segment.shape[0]
+            spec_segment = np.pad(spec_segment, ((0, pad_length), (0, 0)), mode='constant')
+        return torch.tensor(spec_segment, dtype=torch.float32)
 
-        # Decoder
-        output = self.decoder(features)
-
-        # Sortie: (batch, 1, seq_len, 88) -> (batch, seq_len, 88)
-        output = output.squeeze(1)
-
-        # Activation sigmoïde pour obtenir des valeurs entre 0 et 1
-        return torch.sigmoid(output)
+# Reconstruction des prédictions
+def reconstruct_pianoroll(predictions, segment_length, hop_length, total_length):
+    num_segments, _, num_pitches = predictions.shape
+    pianoroll = np.zeros((total_length, num_pitches))
+    counts = np.zeros((total_length, num_pitches))
+    for i in range(num_segments):
+        start = i * hop_length
+        end = start + segment_length
+        pianoroll[start:end, :] += predictions[i, :min(segment_length, total_length - start), :]
+        counts[start:end, :] += 1
+    counts[counts == 0] = 1
+    pianoroll = pianoroll / counts
+    return pianoroll
 
 # Charger le modèle
 def load_model():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # Créer une instance du modèle
-    model = PerformanceNetModel(input_channels=1, output_channels=1)
+    model = OptimizedPerformanceNetModel(input_channels=1, output_channels=1).to(device)
     
     # Charger les poids pré-entraînés
-    model_path = 'PerformanceNet_model.pth'
+    model_path = 'GenerPart-9-22.pth'
     if os.path.exists(model_path):
-        model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
-        model.eval()  # Mettre le modèle en mode évaluation
-        print("Modèle chargé avec succès!")
+        try:
+            model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+            model.eval()  # Mettre le modèle en mode évaluation
+            print("Modèle chargé avec succès!")
+        except RuntimeError as e:
+            print(f"Erreur lors du chargement du modèle {model_path}: {e}")
+            raise
     else:
         print(f"Erreur: Le fichier {model_path} n'existe pas!")
-    
-    return model
+        raise FileNotFoundError(f"Le fichier {model_path} n'existe pas!")
+    return model, device
 
 # Charger le modèle au démarrage de l'application
-model = load_model()
+try:
+    model, device = load_model()
+except Exception as e:
+    print(f"Échec du chargement du modèle: {e}")
+    exit(1)
 
 # Paramètres pour le prétraitement audio
 SR = 16000  # Fréquence d'échantillonnage
@@ -353,13 +505,14 @@ def audio_to_melspectrogram(audio_bytes):
         mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max, top_db=-MIN_DB)
         
         # Normalisation entre 0 et 1
-        mel_spec_norm = (mel_spec_db - MIN_DB) / (-MIN_DB)
+        mel_spec_norm = (mel_spec_db - np.mean(mel_spec_db)) / (np.std(mel_spec_db) + 1e-6)
         
         return mel_spec_norm.T  # Transpose pour obtenir (T, n_mels)
     except Exception as e:
         raise Exception(f"Erreur lors du prétraitement audio: {str(e)}")
 
-def pianoroll_to_midi(pianoroll, threshold=0.5, fs=16000, hop_length=256):
+def pianoroll_to_midi(pianoroll, onsets, offsets, pianoroll_thresholds=[0.33, 0.51, 0.54, 0.54, 0.51, 0.45, 0.48, 0.29], 
+                      onset_threshold=0.4, offset_threshold=0.4, fs=16000, hop_length=256):
     """
     Convertit un pianoroll en fichier MIDI.
     
@@ -376,11 +529,15 @@ def pianoroll_to_midi(pianoroll, threshold=0.5, fs=16000, hop_length=256):
     midi = pretty_midi.PrettyMIDI()
     
     # Ajouter un instrument (piano)
-    piano_program = 0  # 0 = Piano
-    piano = pretty_midi.Instrument(program=piano_program)
+    piano = pretty_midi.Instrument(program=0) # 0 = Piano
     
     # Créer une version binaire du pianoroll
-    binary_roll = pianoroll > threshold
+    pianoroll_binary = np.zeros_like(pianoroll)
+    octave_ranges = [(i * 11, (i + 1) * 11) for i in range(8)]
+    for i, (start, end) in enumerate(octave_ranges):
+        pianoroll_binary[:, start:end] = (pianoroll[:, start:end] >= pianoroll_thresholds[i]).astype(np.int32)
+    onsets_binary = (onsets >= onset_threshold).astype(np.int32)
+    offsets_binary = (offsets >= offset_threshold).astype(np.int32)
     
     # Durée d'un frame en secondes
     frame_duration = hop_length / fs
@@ -389,23 +546,20 @@ def pianoroll_to_midi(pianoroll, threshold=0.5, fs=16000, hop_length=256):
     midi_offset = 21
     
     # Parcourir chaque note (pitch)
-    for pitch in range(binary_roll.shape[1]):
-        # Trouver les débuts et fins de notes
-        diff = np.diff(binary_roll[:, pitch].astype(int), prepend=0, append=0)
-        note_starts = np.where(diff > 0)[0]
-        note_ends = np.where(diff < 0)[0] - 1  # -1 pour compenser le décalage dû à diff
-        
-        # Créer des notes MIDI pour chaque segment trouvé
-        for start, end in zip(note_starts, note_ends):
-            # Vérifier que la note a une durée positive et n'est pas trop courte
-            if end > start and end - start >= 2:  # Au moins 2 frames de durée
-                note = pretty_midi.Note(
-                    velocity=100,  # Vélocité constante pour simplicité
-                    pitch=pitch + midi_offset,
-                    start=start * frame_duration,
-                    end=end * frame_duration
-                )
-                piano.notes.append(note)
+    for pitch in range(pianoroll_binary.shape[1]):
+        onset_times = np.where(onsets_binary[:, pitch] > 0)[0]
+        for start_idx in onset_times:
+            offset_candidates = np.where(offsets_binary[start_idx:, pitch] > 0)[0]
+            if len(offset_candidates) > 0:
+                end_idx = start_idx + offset_candidates[0]
+                if end_idx > start_idx and end_idx - start_idx >= 2:
+                    note = pretty_midi.Note(
+                        velocity=100,
+                        pitch=pitch + midi_offset,
+                        start=start_idx * frame_duration,
+                        end=end_idx * frame_duration
+                    )
+                    piano.notes.append(note)
     
     # Ajouter l'instrument au MIDI
     midi.instruments.append(piano)
@@ -417,20 +571,22 @@ def pianoroll_to_midi(pianoroll, threshold=0.5, fs=16000, hop_length=256):
     
     return midi_bytes.getvalue()
 
-def midi_to_musicxml(midi_file_path, xml_file_path):
-    """
-    Converts a MIDI file to MusicXML using music21.
-
-    Args:
-        midi_file_path: Path to the input MIDI file.
-        xml_file_path: Path to save the output MusicXML file.
-    """
+def midi_to_musicxml(midi_bytes):
     try:
-        midi_stream = converter.parse(midi_file_path)
-        midi_stream.write('musicxml', fp=xml_file_path)
-        print(f"Successfully converted {midi_file_path} to {xml_file_path}")
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.mid') as tmp_midi:
+            tmp_midi.write(midi_bytes)
+            tmp_midi_path = tmp_midi.name
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.musicxml') as tmp_xml:
+            tmp_xml_path = tmp_xml.name
+        midi_stream = converter.parse(tmp_midi_path)
+        midi_stream.write('musicxml', fp=tmp_xml_path)
+        with open(tmp_xml_path, 'r', encoding='utf-8') as f:
+            musicxml_content = f.read()
+        os.unlink(tmp_midi_path)
+        os.unlink(tmp_xml_path)
+        return musicxml_content
     except Exception as e:
-        print(f"Error converting {midi_file_path}: {e}")
+        raise Exception(f"Erreur lors de la conversion MIDI vers MusicXML: {str(e)}")
 
 
 
@@ -485,320 +641,125 @@ def extract_notes_from_piano_roll(piano_roll, time_resolution=0.1, velocity_thre
 
 @app.route('/predict', methods=['POST'])
 def predict():
-    if request.method == 'POST':
-        # Vérifier si la requête contient un fichier
-        if 'file' not in request.files:
-            return jsonify({'error': 'Aucun fichier audio trouvé'}), 400
-        
-        file = request.files['file']
-        
-        if file.filename == '':
-            return jsonify({'error': 'Aucun fichier sélectionné'}), 400
-        
-        # Récupérer le seuil de la requête (s'il est fourni) ou utiliser une valeur par défaut plus basse
-        threshold = float(request.form.get('threshold', 0.2))  # Valeur par défaut plus basse: 0.2 au lieu de 0.5
-        
-        # Récupérer les paramètres d'affichage (optionnels)
-        max_display_length = int(request.form.get('max_display_length', 500))  # Nombre maximum de frames à afficher
-        
-        try:
-            # Lire le fichier audio
-            audio_bytes = file.read()
-            
-            # Convertir en mel-spectrogramme
-            mel_spec = audio_to_melspectrogram(audio_bytes)
-            
-            # Convertir en tensor et ajouter la dimension de batch
-            mel_tensor = torch.FloatTensor(mel_spec).unsqueeze(0)
-            
-            # Faire la prédiction
-            with torch.no_grad():
-                output = model(mel_tensor)
-                
-                # Convertir le résultat en numpy pour le traitement
-                pianoroll = output.squeeze(0).cpu().numpy()
-                
-                # Informations de débogage
-                print(f"Piano roll shape: {pianoroll.shape}")
-                print(f"Piano roll min et max: {pianoroll.min()} {pianoroll.max()}")
-                
-                # Afficher un échantillon des valeurs maximales
-                top_values = np.sort(pianoroll.flatten())[-10:]  # Les 10 plus grandes valeurs
-                print(f"Top 10 valeurs: {top_values}")
-                
-                # Utiliser le seuil adaptatif si aucun seuil n'est fourni
-                if 'threshold' not in request.form:
-                    # Seuil adaptatif: calculer le seuil en fonction des données
-                    if pianoroll.max() < 0.5:
-                        # Si toutes les valeurs sont < 0.5, prendre un percentile élevé comme seuil
-                        adaptive_threshold = np.percentile(pianoroll, 99)  # 99ème percentile
-                        print(f"Utilisation d'un seuil adaptatif (99ème percentile): {adaptive_threshold}")
-                        threshold = adaptive_threshold
-                
-                print(f"Seuil utilisé: {threshold}")
-                
-                # Appliquer le seuil pour obtenir des notes binaires
-                binary_roll = (pianoroll > threshold).astype(np.int8)
-                
-                # Vérifier combien de notes sont détectées
-                nb_notes = np.sum(binary_roll)
-                print(f"Nombre de notes détectées avec seuil {threshold}: {nb_notes}")
-                percentage = 100 * nb_notes / binary_roll.size
-                print(f"Pourcentage de cellules activées: {percentage:.4f}%")
-                
-                # Si trop peu de notes sont détectées, générer un avertissement
-                warning_message = None
-                if nb_notes < 10:
-                    warning_message = f"Seulement {nb_notes} notes détectées avec un seuil de {threshold}. " \
-                                     f"Essayez de réduire le seuil ou d'utiliser un autre fichier audio."
-                
-                # # OPTIMISATION DE L'AFFICHAGE: Trouver les segments pertinents
-                # if nb_notes > 0:
-                #     # Déterminer les limites pertinentes pour le graphique
-                #     active_frames = np.where(np.sum(binary_roll, axis=1) > 0)[0]
-                    
-                #     if len(active_frames) > 0:
-                #         # Trouver les limites des régions actives
-                #         start_frame = max(0, active_frames[0] - 10)  # 10 frames avant la première note
-                #         end_frame = min(pianoroll.shape[0], active_frames[-1] + 10)  # 10 frames après la dernière note
-                        
-                #         # Si la région est trop grande, identifier les segments les plus denses
-                #         display_length = end_frame - start_frame
-                #         if display_length > max_display_length:
-                #             # Diviser en fenêtres et trouver les fenêtres les plus actives
-                #             window_size = 50  # taille de la fenêtre d'analyse
-                #             activity = []
-                            
-                #             for i in range(0, pianoroll.shape[0] - window_size, window_size // 2):  # Chevauchement de 50%
-                #                 window_activity = np.sum(binary_roll[i:i+window_size])
-                #                 activity.append((i, window_activity))
-                            
-                #             # Trier les fenêtres par activité décroissante
-                #             activity.sort(key=lambda x: x[1], reverse=True)
-                            
-                #             # Utiliser les N premières fenêtres les plus actives pour rester sous max_display_length
-                #             top_windows = []
-                #             cumulative_length = 0
-                #             for win_start, _ in activity:
-                #                 if cumulative_length < max_display_length:
-                #                     win_end = min(win_start + window_size, pianoroll.shape[0])
-                #                     top_windows.append((win_start, win_end))
-                #                     cumulative_length += win_end - win_start
-                #                 else:
-                #                     break
-                            
-                #             # Fusionner les fenêtres qui se chevauchent
-                #             if top_windows:
-                #                 top_windows.sort()  # Trier par temps croissant
-                #                 merged_windows = [top_windows[0]]
-                                
-                #                 for current_start, current_end in top_windows[1:]:
-                #                     prev_start, prev_end = merged_windows[-1]
-                #                     if current_start <= prev_end:
-                #                         # Les fenêtres se chevauchent
-                #                         merged_windows[-1] = (prev_start, max(prev_end, current_end))
-                #                     else:
-                #                         # Nouvelle fenêtre
-                #                         merged_windows.append((current_start, current_end))
-                                
-                #                 # Utiliser ces segments pour l'affichage
-                #                 display_segments = merged_windows
-                #             else:
-                #                 # Fallback: afficher le début jusqu'à max_display_length
-                #                 display_segments = [(0, min(max_display_length, pianoroll.shape[0]))]
-                #         else:
-                #             # La région active est assez petite pour être entièrement affichée
-                #             display_segments = [(start_frame, end_frame)]
-                #     else:
-                #         # Aucune note active, afficher juste le début
-                #         display_segments = [(0, min(max_display_length, pianoroll.shape[0]))]
-                # else:
-                #     # Aucune note détectée, montrer juste le début du pianoroll
-                #     display_segments = [(0, min(max_display_length, pianoroll.shape[0]))]
-                
-                # # Créer une figure pour chaque segment et les concaténer
-                # plt.figure(figsize=(12, 8))
-                
-                # # S'il y a plusieurs segments, utiliser une mise en page subplots
-                # n_segments = len(display_segments)
-                # total_display_frames = sum(end - start for start, end in display_segments)
-                
-                # # Si on a trop de segments, on en limite le nombre
-                # if n_segments > 3:  # Limiter à 3 segments au maximum
-                #     display_segments = display_segments[:3]
-                #     n_segments = 3
-                
-                # # Créer un affichage pour les probabilités brutes
-                # plt.subplot(2, 1, 1)
-
-                display_segments = [(0, pianoroll.shape[0])]
-                n_segments = 1
-              
-                if n_segments == 1:
-                    # Un seul segment: afficher normalement
-                    start, end = display_segments[0]
-                    plt.imshow(pianoroll[start:end].T, aspect='auto', origin='lower', cmap='hot', interpolation='nearest')
-                    plt.title(f'Pianoroll - Probabilités brutes (frames {start}-{end}, max={pianoroll.max():.4f})')
+    if 'file' not in request.files:
+        return jsonify({'error': 'Aucun fichier audio trouvé'}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'Aucun fichier sélectionné'}), 400
+    try:
+        audio_bytes = file.read()
+        mel_spec = audio_to_melspectrogram(audio_bytes)
+        if mel_spec.shape[1] != 88:
+            return jsonify({'error': f"Le spectrogramme doit avoir 88 bins fréquentiels, mais a {mel_spec.shape[1]}"}), 400
+        segment_length = 400
+        overlap = 0.5
+        hop_length = int(segment_length * (1 - overlap))
+        batch_size = 64
+        confidence_thresholds = [0.33, 0.51, 0.54, 0.54, 0.51, 0.45, 0.48, 0.29]
+        onset_threshold = 0.4
+        offset_threshold = 0.4
+        dataset = SpectrogramDataset(mel_spec, segment_length, overlap)
+        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, 
+                                pin_memory=torch.cuda.is_available())
+        pred_pianorolls = []
+        pred_onsets = []
+        pred_offsets = []
+        with torch.no_grad():
+            for spec_batch in dataloader:
+                spec_batch = spec_batch.to(device, non_blocking=True)
+                if device.type == 'cuda':
+                    with torch.amp.autocast(device_type='cuda'):
+                        pred_pianoroll, pred_onset, pred_offset = model(spec_batch)
                 else:
-                    # Plusieurs segments: créer une image composite
-                    segment_images = []
-                    segment_labels = []
-                    
-                    for i, (start, end) in enumerate(display_segments):
-                        segment_images.append(pianoroll[start:end].T)
-                        segment_labels.append(f"{start}-{end}")
-                    
-                    # Ajouter des séparateurs verticaux entre segments
-                    composite_image = np.hstack([np.ones((pianoroll.shape[1], 3)) * -1] + 
-                                              [np.hstack([img, np.ones((pianoroll.shape[1], 3)) * -1]) 
-                                               for img in segment_images])
-                    
-                    plt.imshow(composite_image, aspect='auto', origin='lower', cmap='hot', interpolation='nearest')
-                    plt.title(f'Pianoroll - Probabilités brutes (segments: {", ".join(segment_labels)}, max={pianoroll.max():.4f})')
-                
-                plt.colorbar(label='Probabilités de notes (valeurs brutes)')
-                plt.xlabel('Temps (frames)')
-
-                plt.ylabel('Notes (MIDI)')  
-                plt.grid(True, linestyle='--', alpha=0.7)
-                
-                # Créer un affichage pour le pianoroll binaire
-                plt.subplot(2, 1, 2)
-                
-                if n_segments == 1:
-                    # Un seul segment: afficher normalement
-                    start, end = display_segments[0]
-                    plt.imshow(binary_roll[start:end].T, aspect='auto', origin='lower', cmap='Blues', interpolation='nearest')
-                    plt.title(f'Pianoroll binaire - {nb_notes} notes (frames {start}-{end})')
-                else:
-                    # Plusieurs segments: créer une image composite
-                    segment_images = []
-                    
-                    for start, end in display_segments:
-                        segment_images.append(binary_roll[start:end].T)
-                    
-                    # Ajouter des séparateurs verticaux entre segments
-                    composite_image = np.hstack([np.ones((binary_roll.shape[1], 3)) * -1] + 
-                                              [np.hstack([img, np.ones((binary_roll.shape[1], 3)) * -1]) 
-                                               for img in segment_images])
-                    
-                    plt.imshow(composite_image, aspect='auto', origin='lower', cmap='Blues', interpolation='nearest')
-                    plt.title(f'Pianoroll binaire - {nb_notes} notes détectées')
-                
-                plt.colorbar(label=f'Notes binaires (seuil={threshold:.4f})')
-                plt.xlabel('Temps (frames)')
-                plt.ylabel('Notes (MIDI)')
-                plt.grid(True, linestyle='--', alpha=0.7)
-                
-                plt.tight_layout()
-                
-                # Enregistrer l'image
-                buf = io.BytesIO()
-                plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
-                plt.close()
-                buf.seek(0)
-                img_base64 = base64.b64encode(buf.read()).decode('utf-8')
-                try:
-                    midi_bytes = pianoroll_to_midi(pianoroll, threshold, SR, HOP_LENGTH)
-                    midi_base64 = base64.b64encode(midi_bytes).decode('utf-8')
-                    
-                    # Générer un nom de fichier avec timestamp
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    midi_filename = f"transcription_{timestamp}.mid"
-
-                    # --- IMPORTANT: Save the MIDI bytes to a file ---
-                    with open(midi_filename, 'wb') as f:
-                        f.write(midi_bytes)
-                    print(f"MIDI file saved as: {midi_filename}")
-                    
-                    midi_success = True
-                    midi_message = "Fichier MIDI généré avec succès"
-
-                    # midi_to_musicxml
-                    converter = MidiToSheetConverter(midi_filename)
-
-                    if converter.load_midi():
-                        # Analyze the score
-                        analysis = converter.analyze_score()
-
-                        # Simplify if needed
-                        converter.simplify_score()
-
-                        # Generate outputs
-                        musicxml_path = converter.generate_musicxml()
-
-                        # Generate MusicXML string for direct use
-                        # musicxml_string = converter.generate_musicxml_string()
-
-                        # Convert MusicXML to base64 for transmission
-                        musicxml_base64 = None
-                        if musicxml_path and os.path.exists(musicxml_path):
-                            with open(musicxml_path, 'r', encoding='utf-8') as f:
-                                musicxml_content = f.read()
-                                musicxml_base64 = base64.b64encode(musicxml_content.encode('utf-8')).decode('utf-8')
-
-                        png_path = converter.generate_png()
-
-                        png_base64 = None
-                        if png_path and os.path.exists(png_path):
-                            with open(png_path, 'rb') as f:
-                                png_content = f.read()
-                                png_base64 = base64.b64encode(png_content).decode('utf-8')
-
-
-
-                        # Get JSON representation for web use
-                        json_data = converter.get_json_representation()
-
-                        print("Conversion complete!")
-                        print(f"MusicXML: {musicxml_path}")
-                        print(f"PNG: {png_path}")
-                        print(f"JSON data available for web display")
-                except Exception as midi_error:
-                    print(f"Erreur lors de la génération du MIDI: {str(midi_error)}")
-                    import traceback
-                    traceback.print_exc()
-                    midi_base64 = None
-                    midi_filename = None
-                    midi_success = False
-                    midi_message = f"Erreur lors de la génération du MIDI: {str(midi_error)}"
-                
-                # Préparer la réponse avec les données
-                result = {
-                    'pianoroll': binary_roll.tolist(),
-                    'probabilities': pianoroll.tolist(),
-                    'shape': pianoroll.shape,
-                    'timesteps': pianoroll.shape[0],
-                    'notes': pianoroll.shape[1],
-                    'image_base64': img_base64,
-                    'threshold_used': float(threshold),
-                    'max_probability': float(pianoroll.max()),
-                    'notes_detected': int(nb_notes),
-                    'percentage_active': float(percentage),
-                    'display_segments': [{'start': int(start), 'end': int(end)} for start, end in display_segments],
-                    'midi_base64': midi_base64,
-                    'midi_filename': midi_filename,
-                    'midi_success': midi_success,
-                    'midi_message': midi_message,
-                    # 'xml_string': musicxml_string,  # Raw MusicXML string
-                    'xml_base64': musicxml_base64,  # Base64 encoded MusicXML
-                    'xml_filename': musicxml_path.split('/')[-1] if musicxml_path else None,  # Just the filename
-                    'png_path': png_path,  # Path to the generated PNG
-                    'png_base64': png_base64,  # Base64 encoded PNG
-                }
-                
-                if warning_message:
-                    result['warning'] = warning_message
-                
-                status = 'warning' if warning_message else 'success'
-
-                return jsonify({'status': status, 'music_data': result})
-                
-        except Exception as e:
-            print(f"ERREUR: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return jsonify({'status': 'error', 'message': str(e)}), 500
+                    pred_pianoroll, pred_onset, pred_offset = model(spec_batch)
+                pred_pianoroll = torch.sigmoid(pred_pianoroll).cpu().numpy()
+                pred_onset = torch.sigmoid(pred_onset).cpu().numpy()
+                pred_offset = torch.sigmoid(pred_offset).cpu().numpy()
+                for i in range(pred_pianoroll.shape[0]):
+                    pred_pianoroll[i] = advanced_post_processing(pred_pianoroll[i], confidence_thresholds)
+                pred_pianorolls.append(pred_pianoroll)
+                pred_onsets.append(pred_onset)
+                pred_offsets.append(pred_offset)
+        pred_pianorolls = np.concatenate(pred_pianorolls, axis=0)
+        pred_onsets = np.concatenate(pred_onsets, axis=0)
+        pred_offsets = np.concatenate(pred_offsets, axis=0)
+        pianoroll_pred = reconstruct_pianoroll(pred_pianorolls, segment_length, hop_length, mel_spec.shape[0])
+        onset_pred = reconstruct_pianoroll(pred_onsets, segment_length, hop_length, mel_spec.shape[0])
+        offset_pred = reconstruct_pianoroll(pred_offsets, segment_length, hop_length, mel_spec.shape[0])
+        pianoroll_binary = np.zeros_like(pianoroll_pred)
+        octave_ranges = [(i * 11, (i + 1) * 11) for i in range(8)]
+        for i, (start, end) in enumerate(octave_ranges):
+            pianoroll_binary[:, start:end] = (pianoroll_pred[:, start:end] >= confidence_thresholds[i]).astype(np.int32)
+        nb_notes = np.sum(pianoroll_binary)
+        percentage = 100 * nb_notes / pianoroll_binary.size
+        warning_message = None
+        if nb_notes < 10:
+            warning_message = f"Seulement {nb_notes} notes détectées. Essayez un fichier audio différent."
+        midi_bytes = pianoroll_to_midi(pianoroll_pred, onset_pred, offset_pred, 
+                                       confidence_thresholds, onset_threshold, offset_threshold, SR, HOP_LENGTH)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        midi_filename = f"transcription_{timestamp}.mid"
+        with open(midi_filename, 'wb') as f:
+            f.write(midi_bytes)
+        converter = MidiToSheetConverter(midi_filename)
+        if converter.load_midi():
+            analysis = converter.analyze_score()
+            converter.simplify_score()
+            musicxml_path = converter.generate_musicxml()
+            musicxml_base64 = None
+            if musicxml_path and os.path.exists(musicxml_path):
+                with open(musicxml_path, 'r', encoding='utf-8') as f:
+                    musicxml_content = f.read()
+                    musicxml_base64 = base64.b64encode(musicxml_content.encode('utf-8')).decode('utf-8')
+            png_path = converter.generate_png()
+            png_base64 = None
+            if png_path and os.path.exists(png_path):
+                with open(png_path, 'rb') as f:
+                    png_content = f.read()
+                    png_base64 = base64.b64encode(png_content).decode('utf-8')
+            json_data = converter.get_json_representation()
+            print("Conversion complete!")
+            print(f"MusicXML: {musicxml_path}")
+            print(f"PNG: {png_path}")
+        else:
+            raise Exception("Échec du chargement du fichier MIDI pour conversion.")
+        result = {
+            'pianoroll': pianoroll_binary.tolist(),
+            'probabilities': pianoroll_pred.tolist(),
+            'onsets': onset_pred.tolist(),
+            'offsets': offset_pred.tolist(),
+            'shape': pianoroll_pred.shape,
+            'timesteps': pianoroll_pred.shape[0],
+            'notes': pianoroll_pred.shape[1],
+            'threshold_used': confidence_thresholds,
+            'onset_threshold': float(onset_threshold),
+            'offset_threshold': float(offset_threshold),
+            'max_probability': float(pianoroll_pred.max()),
+            'notes_detected': int(nb_notes),
+            'percentage_active': float(percentage),
+            'midi_base64': base64.b64encode(midi_bytes).decode('utf-8'),
+            'midi_filename': midi_filename,
+            'midi_success': True,
+            'midi_message': "Fichier MIDI généré avec succès",
+            'xml_base64': musicxml_base64,
+            'xml_filename': musicxml_path.split('/')[-1] if musicxml_path else None,
+            'png_path': png_path,
+            'png_base64': png_base64,
+            'json_data': json_data
+        }
+        if warning_message:
+            result['warning'] = warning_message
+        status = 'warning' if warning_message else 'success'
+        if device.type == 'cuda':
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+        gc.collect()
+        return jsonify({'status': status, 'music_data': result})
+    except Exception as e:
+        print(f"ERREUR: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 # Generation partition to audio      
 # Paramètres
